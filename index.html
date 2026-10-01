@@ -2789,12 +2789,49 @@
           espec: String(row.espec || 'Geral'),
           status: String(row.status),
           meta: Number(row.meta || 0),
-          concluidas: Number(row.concluidas || 0),
-          sla: Number(row.sla || 0),
-          ativas: Number(row.ativas || 0),
-          tempoMedio: Number(row.tempo_medio || 0),
+          concluidas: Number(row.concluidas ?? 0),
+          sla: (row.sla === null || row.sla === undefined || row.sla === '') ? null : Number(row.sla),
+          ativas: Number(row.ativas ?? 0),
+          tempoMedio: Number(row.tempo_medio ?? 0),
           obs: String(row.obs || '')
         };
+      },
+
+      // ---- Métricas reais de calculistas (fonte única: dls_demandas) ----
+      // Não utilizar dls_calculistas.concluidas/ativas/sla (legado) para exibição.
+      isDemandaAtiva(status) {
+        return status !== 'entregue' && status !== 'cancelada';
+      },
+      slaDateOnly(value) {
+        if (!value) return null;
+        const s = String(value);
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 10);
+      },
+      calcMetricasReais(calculistaId, todasDemandas) {
+        const mine = (todasDemandas || []).filter(d => (d.responsavelId || '') !== '' && d.responsavelId === calculistaId);
+        const concluidas = mine.filter(d => d.status === 'entregue').length;
+        const ativas = mine.filter(d => this.isDemandaAtiva(d.status)).length;
+        const elegiveis = mine.filter(d => d.status === 'entregue' && (d.prazo || '') !== '' && !!d.concluidaEm);
+        let sla = null;
+        if (elegiveis.length) {
+          const noPrazo = elegiveis.filter(d => {
+            const c = this.slaDateOnly(d.concluidaEm);
+            const p = String(d.prazo || '').slice(0, 10);
+            return !!c && !!p && c <= p;
+          }).length;
+          sla = Math.round((100.0 * noPrazo / elegiveis.length) * 100) / 100;
+        }
+        return { concluidas, ativas, sla };
+      },
+      withMetricasReais(calcs, todasDemandas) {
+        const all = todasDemandas || ((this.cache && this.cache[this.KEY_DEMANDAS]) || []);
+        return (calcs || []).map(c => {
+          const m = this.calcMetricasReais(c.id, all);
+          return { ...c, concluidas: m.concluidas, ativas: m.ativas, sla: m.sla };
+        });
       },
 
       clienteFromRow(row) {
@@ -2837,6 +2874,7 @@
           valor: Number(row.valor || 0),
           criadoEm: this.datetimeOut(row.criado_em),
           updatedAt: this.datetimeOut(row.updated_at),
+          concluidaEm: row.concluida_em ? String(row.concluida_em) : null,
           historico: this.jsonArray(row.historico),
           comentarios: this.jsonArray(row.comentarios)
         };
@@ -2911,9 +2949,19 @@
             }
           }
 
+          const _demandasCache = this.select('dls_demandas', { order: 'criado_em.desc.nullslast,numero.desc' }).map(row => this.demandaFromRow(row));
+          let _calcsCache;
+          try {
+            _calcsCache = this.select('vw_dls_calculistas_gestao', { order: 'nome.asc' }).map(row => this.calculistaFromRow(row));
+          } catch (eView) {
+            console.warn('[DLS] View vw_dls_calculistas_gestao indisponível, usando dls_calculistas + agregação local.', eView?.message || eView);
+            _calcsCache = this.select('dls_calculistas', { order: 'nome.asc' }).map(row => this.calculistaFromRow(row));
+          }
+          // Fonte única da verdade: demandas. Sobrescreve concluidas/ativas/sla com agregação real.
+          _calcsCache = this.withMetricasReais(_calcsCache, _demandasCache);
           this.cache = {
-            [this.KEY_DEMANDAS]: this.select('dls_demandas', { order: 'criado_em.desc.nullslast,numero.desc' }).map(row => this.demandaFromRow(row)),
-            [this.KEY_CALCULISTAS]: this.select('dls_calculistas', { order: 'nome.asc' }).map(row => this.calculistaFromRow(row)),
+            [this.KEY_DEMANDAS]: _demandasCache,
+            [this.KEY_CALCULISTAS]: _calcsCache,
             [this.KEY_CLIENTES]: this.select('dls_clientes', { order: 'nome.asc' }).map(row => this.clienteFromRow(row)),
             [this.KEY_LOGS]: this.select('dls_logs', { order: 'id.desc', limit: '200' }).map(row => this.logFromRow(row)),
             [this.KEY_SEQ]: String((seqRows[0] && seqRows[0].current_value) || 100),
@@ -3008,10 +3056,10 @@
           espec: this.emptyToNull(item.espec || 'Geral'),
           status: String(item.status || 'online'),
           meta: Number(item.meta || 20),
-          concluidas: Number(item.concluidas || 0),
-          sla: Number(item.sla || 95),
-          ativas: Number(item.ativas || 0),
-          tempo_medio: Number(item.tempoMedio || 2),
+          concluidas: Number(item.concluidas ?? 0),
+          sla: (item.sla === null || item.sla === undefined || item.sla === '' ? 95 : Number(item.sla)),
+          ativas: Number(item.ativas ?? 0),
+          tempo_medio: Number(item.tempoMedio ?? 2),
           obs: this.emptyToNull(item.obs)
         };
       },
@@ -3037,6 +3085,8 @@
 
       demandaToRow(item) {
         // Base row — columns guaranteed to exist in dls_demandas
+        // concluida_em é gerenciada exclusivamente pelo trigger dls_demandas_set_concluida_em
+        // (nunca enviada pelo frontend para não sobrescrever a data real de entrega).
         const row = {
           id: String(item.id),
           numero: String(item.numero),
@@ -3103,33 +3153,45 @@
         };
       },
 
-      // CALCULISTAS
-      getCalculistas() { return this.get(this.KEY_CALCULISTAS); },
+      // CALCULISTAS — métricas sempre recalculadas das demandas em cache (fonte real)
+      getCalculistas() {
+        this.ensureLoaded();
+        const calcs = this.clone(this.cache[this.KEY_CALCULISTAS] || []);
+        const demandas = this.clone(this.cache[this.KEY_DEMANDAS] || []);
+        return this.withMetricasReais(calcs, demandas);
+      },
       saveCalculista(data) {
         const isNew = !data.id;
         if (isNew) {
           data.id = 'CALC-' + this.nextId();
-          data.concluidas = 0;
-          data.sla = 95;
-          data.ativas = 0;
-          data.tempoMedio = 2.0;
         }
-        // Update cache
-        const list = this.getCalculistas();
+        // Update cache (cadastro; métricas são recalculadas na leitura a partir das demandas)
+        this.ensureLoaded();
+        const rawList = this.clone(this.cache[this.KEY_CALCULISTAS] || []);
         if (isNew) {
-          list.push(data);
+          const novo = { ...data, concluidas: 0, sla: null, ativas: 0, tempoMedio: 2.0 };
+          rawList.push(novo);
+          this.cache[this.KEY_CALCULISTAS] = rawList;
+          // Surgical DB operation — only touch this row (colunas legadas mantidas por compatibilidade)
+          this.saveRow('dls_calculistas', this.calculistaToRow(novo));
         } else {
-          const i = list.findIndex(c => c.id === data.id);
-          if (i >= 0) list[i] = data;
+          const i = rawList.findIndex(c => c.id === data.id);
+          if (i >= 0) {
+            // Preserva métricas/tempoMedio armazenados; atualiza apenas dados cadastrais
+            rawList[i] = { ...rawList[i], ...data };
+            data = rawList[i];
+          }
+          this.cache[this.KEY_CALCULISTAS] = rawList;
+          // Surgical DB operation — only touch this row
+          this.saveRow('dls_calculistas', this.calculistaToRow(data));
         }
-        this.cache[this.KEY_CALCULISTAS] = list;
-        // Surgical DB operation — only touch this row
-        this.saveRow('dls_calculistas', this.calculistaToRow(data));
         this.log(currentUserName(), 'Salvar Calculista', 'Calculista', data.nome);
       },
       deleteCalculista(id) {
-        const item = this.getCalculistas().find(c => c.id === id);
-        this.cache[this.KEY_CALCULISTAS] = this.getCalculistas().filter(c => c.id !== id);
+        this.ensureLoaded();
+        const raw = this.clone(this.cache[this.KEY_CALCULISTAS] || []);
+        const item = raw.find(c => c.id === id);
+        this.cache[this.KEY_CALCULISTAS] = raw.filter(c => c.id !== id);
         // Surgical DB delete — only this row
         this.deleteRow('dls_calculistas', id);
         this.log(currentUserName(), 'Excluir Calculista', 'Calculista', item ? item.nome : id);
@@ -4245,8 +4307,8 @@
       d.historico.unshift({ data: new Date().toLocaleString('pt-BR'), texto: `Status alterado para "${document.getElementById('detalheStatusSelect').options[document.getElementById('detalheStatusSelect').selectedIndex].text}"`, autor: statusUser });
       d.status = novoStatus;
       d.updatedAt = new Date().toISOString();
-      // Surgical: update only this demanda row
-      DB.saveRow('dls_demandas', DB.demandaToRow(d));
+      // Surgical: update only this demanda row (concluida_em via trigger no banco)
+      DB.saveRowDemanda(d);
       if (DB.cache && DB.cache[DB.KEY_DEMANDAS]) {
         const idx = DB.cache[DB.KEY_DEMANDAS].findIndex(x => x.id === d.id);
         if (idx >= 0) DB.cache[DB.KEY_DEMANDAS][idx] = d;
@@ -4334,13 +4396,17 @@
 
     function renderCalculistas() {
       const calcs = DB.getCalculistas();
-      const demandas = DB.getDemandas();
       document.getElementById('calcSubtitle').textContent = `${calcs.length} calculistas cadastrados · ${calcs.filter(c => c.status === 'online').length} online agora`;
       const grid = document.getElementById('calcGrid');
       if (!calcs.length) { grid.innerHTML = `<div style="grid-column:1/-1"><div class="empty-state"><i class="fas fa-users"></i><p>Nenhum calculista cadastrado. Clique em "Novo Calculista" para começar.</p></div></div>`; return; }
       const maxAtivas = Math.max(...calcs.map(c => c.ativas || 0), 1);
       grid.innerHTML = calcs.map((c, i) => {
-        const ativas = demandas.filter(d => d.responsavelId === c.id && ['triagem', 'pendente', 'andamento', 'revisao', 'aguardando'].includes(d.status)).length;
+        // Métricas reais vindas da camada de dados (agregação de dls_demandas). Não recalcular aqui.
+        const ativas = Number(c.ativas ?? 0);
+        const concluidas = Number(c.concluidas ?? 0);
+        const slaNull = (c.sla === null || c.sla === undefined);
+        const slaTxt = slaNull ? '—' : (Number(c.sla) + '%');
+        const slaColor = slaNull ? 'var(--white-40)' : (c.sla >= 90 ? 'var(--success-light)' : 'var(--amber)');
         const pct = Math.round(Math.min((ativas / (c.meta || 20)) * 100, 100));
         const barColor = pct > 85 ? 'red' : pct > 65 ? 'amber' : 'blue';
         const statusLabel = { online: 'Online', busy: 'Ocupado', offline: 'Offline' }[c.status] || c.status;
@@ -4356,11 +4422,11 @@
       </div>
       <div class="grid-2 mb12" style="gap:8px">
         <div style="background:var(--white-08);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:20px;font-weight:800;color:var(--blue-light)">${c.concluidas || 0}</div>
+          <div style="font-size:20px;font-weight:800;color:var(--blue-light)">${concluidas}</div>
           <div class="text-xs text-muted">Concluídas</div>
         </div>
         <div style="background:var(--white-08);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:20px;font-weight:800;color:${c.sla >= 90 ? 'var(--success-light)' : 'var(--amber)'}">${c.sla || 0}%</div>
+          <div style="font-size:20px;font-weight:800;color:${slaColor}">${slaTxt}</div>
           <div class="text-xs text-muted">SLA</div>
         </div>
       </div>
@@ -4378,7 +4444,7 @@
       const ctx = document.getElementById('chartCalculistas');
       if (ctx) {
         const colors = ['rgba(21,101,192,.7)', 'rgba(198,40,40,.6)', 'rgba(46,125,50,.6)', 'rgba(245,158,11,.6)', 'rgba(156,39,176,.6)', 'rgba(0,150,136,.6)'];
-        window.chartCalcInstance = new Chart(ctx, { type: 'bar', data: { labels: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai'], datasets: calcs.slice(0, 5).map((c, i) => ({ label: c.nome.split(' ')[0], data: [10 + i + Math.floor(Math.random() * 5), 11 + i, 12 + i, 13 + i, c.concluidas || 10 + i], backgroundColor: colors[i], borderRadius: 4 })) }, options: { ...chartBaseOpts, scales: { x: { ticks: { color: 'rgba(255,255,255,.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: 'rgba(255,255,255,.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.06)' } } } } });
+        window.chartCalcInstance = new Chart(ctx, { type: 'bar', data: { labels: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai'], datasets: calcs.slice(0, 5).map((c, i) => ({ label: c.nome.split(' ')[0], data: [10 + i + Math.floor(Math.random() * 5), 11 + i, 12 + i, 13 + i, (c.concluidas ?? 0)], backgroundColor: colors[i], borderRadius: 4 })) }, options: { ...chartBaseOpts, scales: { x: { ticks: { color: 'rgba(255,255,255,.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: 'rgba(255,255,255,.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.06)' } } } } });
       }
     }
 
@@ -4587,7 +4653,7 @@
     <div class="rank-item">
       <div class="rank-num ${i === 0 ? 'gold' : ''}">${medals[i] || i + 1}</div>
       <div class="avatar ${avatarClass(calcs.indexOf(c))}" style="width:30px;height:30px;font-size:11px">${initials(c.nome)}</div>
-      <div class="rank-info"><div class="rank-name">${c.nome.split(' ').slice(0, 2).join(' ')}</div><div class="rank-meta">${c.concluidas || 0} concluídas · SLA ${c.sla || 0}%</div></div>
+      <div class="rank-info"><div class="rank-name">${c.nome.split(' ').slice(0, 2).join(' ')}</div><div class="rank-meta">${c.concluidas || 0} concluídas · SLA ${(c.sla === null || c.sla === undefined) ? '—' : Number(c.sla) + '%'}</div></div>
       <div class="rank-score">${c.concluidas || 0}</div>
     </div>`).join('');
       // Recent demands
@@ -4779,7 +4845,7 @@
         const ativas = demandas.filter(d => d.responsavelId === c.id && ['triagem', 'pendente', 'andamento', 'revisao', 'aguardando'].includes(d.status)).length;
         const concl = demandas.filter(d => d.responsavelId === c.id && d.status === 'entregue').length;
         const atrCalc = demandas.filter(d => d.responsavelId === c.id && d.status === 'atrasada').length;
-        return `<tr><td><strong>${c.nome}</strong></td><td>${ativas}</td><td>${c.concluidas || 0}</td><td>${concl}</td><td style="color:${c.sla >= 90 ? 'var(--success-light)' : 'var(--amber)'}">${c.sla || 0}%</td><td>${c.tempoMedio || 2.0}d</td><td style="color:${atrCalc ? 'var(--red-bright)' : 'var(--success-light)'}">${atrCalc}</td></tr>`;
+        return `<tr><td><strong>${c.nome}</strong></td><td>${ativas}</td><td>${c.concluidas || 0}</td><td>${concl}</td><td style="color:${(c.sla === null || c.sla === undefined) ? 'var(--white-40)' : (c.sla >= 90 ? 'var(--success-light)' : 'var(--amber)')}">${(c.sla === null || c.sla === undefined) ? '—' : Number(c.sla) + '%'}</td><td>${c.tempoMedio || 2.0}d</td><td style="color:${atrCalc ? 'var(--red-bright)' : 'var(--success-light)'}">${atrCalc}</td></tr>`;
       }).join('');
       buildChartRelatorio();
       buildChartTipos();
@@ -4791,7 +4857,7 @@
       let csv = '\uFEFF' + 'Calculista,Cargo,Ativas,Concluídas,SLA,Tempo Médio\n';
       calcs.forEach(c => {
         const ativas = demandas.filter(d => d.responsavelId === c.id && ['triagem', 'pendente', 'andamento', 'revisao'].includes(d.status)).length;
-        csv += `"${c.nome}","${c.cargo}","${ativas}","${c.concluidas || 0}","${c.sla || 0}%","${c.tempoMedio || 0}d"\n`;
+        csv += `"${c.nome}","${c.cargo}","${ativas}","${c.concluidas || 0}","${(c.sla === null || c.sla === undefined) ? '—' : Number(c.sla) + '%'}","${c.tempoMedio || 0}d"\n`;
       });
       downloadFile('relatorio_dls.csv', csv, 'text/csv;charset=utf-8;');
     }
@@ -4883,7 +4949,7 @@
         const ativasCalc = demandas.filter(d => d.responsavelId === c.id && activeStatuses.includes(d.status)).length;
         const entreguesCalc = demandas.filter(d => d.responsavelId === c.id && d.status === 'entregue').length;
         const atrasadasCalc = demandas.filter(d => d.responsavelId === c.id && d.status === 'atrasada').length;
-        calcRows.push([c.nome, c.cargo, c.espec, c.status, Number(c.meta || 0), ativasCalc, Number(c.concluidas || 0), entreguesCalc, atrasadasCalc, `${c.sla || 0}%`, `${c.tempoMedio || 0}d`, c.obs || '']);
+        calcRows.push([c.nome, c.cargo, c.espec, c.status, Number(c.meta || 0), ativasCalc, Number(c.concluidas || 0), entreguesCalc, atrasadasCalc, `${(c.sla === null || c.sla === undefined) ? '—' : Number(c.sla) + '%'}`, `${c.tempoMedio || 0}d`, c.obs || '']);
       });
       addSheet('Calculistas', calcRows, [28, 20, 18, 14, 10, 10, 16, 18, 12, 10, 14, 30]);
 
@@ -5364,7 +5430,7 @@
           if (changed) {
             // Surgical: only save the rows that changed status
             demandas.filter(d => d.status === 'atrasada').forEach(d => {
-              try { DB.saveRow('dls_demandas', DB.demandaToRow(d)); } catch(e) {}
+              try { DB.saveRowDemanda(d); } catch(e) {}
             });
             if (DB.cache) DB.cache[DB.KEY_DEMANDAS] = demandas;
             renderDashboard(); updateBadges();
