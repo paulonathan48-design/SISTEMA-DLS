@@ -1767,7 +1767,7 @@
       <div class="card">
         <div class="card-header mb12">
           <div class="flex-center gap8" style="flex-wrap:wrap">
-            <input class="form-input" style="width:200px;padding:7px 12px" placeholder="Buscar demanda, processo…" title="Ctrl+F para focar"
+            <input class="form-input" style="width:200px;padding:7px 12px" placeholder="Buscar demanda, processo, chamado…" title="Ctrl+F para focar"
               id="searchDemandas" oninput="demandasPage=1;renderDemandasTable()">
             <input class="form-input" style="width:170px;padding:7px 12px" placeholder="Filtrar reclamante…"
               id="filterReclamante" oninput="demandasPage=1;renderDemandasTable()">
@@ -1778,6 +1778,26 @@
             <select class="form-select" style="width:155px;padding:7px 12px" id="filterCalculista"
               onchange="demandasPage=1;renderDemandasTable()">
               <option value="">Todos os calculistas</option>
+            </select>
+            <select class="form-select" style="width:175px;padding:7px 12px" id="filterPrazo"
+              onchange="demandasPage=1;renderDemandasTable()" title="Filtrar por vencimento do prazo">
+              <option value="">Todos os prazos</option>
+              <option value="vencidas">Vencidas</option>
+              <option value="hoje">Vencem hoje</option>
+              <option value="7dias">Próximos 7 dias</option>
+              <option value="mes">Este mês</option>
+              <option value="sem">Sem prazo</option>
+            </select>
+            <select class="form-select" style="width:220px;padding:7px 12px" id="sortDemandas"
+              onchange="demandasSort=this.value;demandasPage=1;renderDemandasTable()" title="Ordenar demandas">
+              <option value="padrao">Ordenação padrão</option>
+              <option value="criacao_desc">Criação: mais recentes</option>
+              <option value="criacao_asc">Criação: mais antigas</option>
+              <option value="prazo_asc">Prazo: a vencer primeiro</option>
+              <option value="prazo_desc">Prazo: mais distantes</option>
+              <option value="alfa_asc">Cliente: A–Z</option>
+              <option value="alfa_desc">Cliente: Z–A</option>
+              <option value="prio">Prioridade: mais crítica</option>
             </select>
           </div>
           <div style="font-size:10px;color:var(--white-40);margin-top:6px">
@@ -2006,6 +2026,36 @@
           </table>
         </div>
       </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header">
+          <span class="card-title">Produção por Calculista — Dia e Mês</span>
+          <label style="font-size:12px;color:var(--white-70);display:flex;align-items:center;gap:6px">
+            <i class="fas fa-calendar-alt" style="color:var(--blue-light)"></i>Mês
+            <input type="month" class="form-input" id="prodMes" style="width:150px;padding:6px 10px" onchange="setProdMes(this.value)">
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Calculista</th>
+                <th>Hoje</th>
+                <th>No mês</th>
+                <th>Total Histórico</th>
+              </tr>
+            </thead>
+            <tbody id="prodResumoTable"></tbody>
+          </table>
+        </div>
+        <div class="card-header" style="margin-top:16px"><span class="card-title">Detalhe dia a dia — <span id="prodMesLabel"></span></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead id="prodDetalheHead"></thead>
+            <tbody id="prodDetalheBody"></tbody>
+          </table>
+        </div>
+        <div class="text-xs text-muted" id="prodSemData" style="margin-top:8px"></div>
+      </div>
     </div>
 
     <!-- ===== AUDITORIA ===== -->
@@ -2178,21 +2228,8 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Natureza da Demanda *</label>
-            <select class="form-select" id="demandaNatureza">
-              <option value="">Selecione</option>
-              <option value="Administrativo">Administrativo</option>
-              <option value="Civil">Civil</option>
-              <option value="Trabalhista">Trabalhista</option>
-              <option value="Previdenciário">Previdenciário</option>
-              <option value="Tributário">Tributário</option>
-              <option value="Cível">Cível</option>
-              <option value="Criminal">Criminal</option>
-              <option value="Empresarial">Empresarial</option>
-              <option value="Consumidor">Consumidor</option>
-              <option value="Ambiental">Ambiental</option>
-              <option value="Outro">Outro</option>
-            </select>
+            <label class="form-label">Procurador Responsável *</label>
+            <input class="form-input" id="demandaProcurador" placeholder="Nome do procurador responsável">
           </div>
           <div class="form-group">
             <label class="form-label">Tipo de Cálculo *</label>
@@ -2273,6 +2310,10 @@
             </select>
           </div>
         </div>
+        <div class="form-group">
+          <label class="form-label">Chamado (opcional)</label>
+          <input class="form-input" id="demandaChamado" placeholder="Chamado designado — opcional">
+        </div>
         <!-- Usuários com acesso a esta demanda (visível apenas para admin) -->
         <div class="form-group" id="demandaUsuariosWrap" style="display:none">
           <label class="form-label"><i class="fas fa-user-lock" style="color:var(--amber);margin-right:6px"></i>Usuários com Acesso a esta Demanda</label>
@@ -2336,6 +2377,23 @@
         <button class="btn btn-ghost" onclick="closeModal('modalDetalhe')">Fechar</button>
         <button class="btn btn-primary" onclick="salvarStatusDetalhe()"><i class="fas fa-save"></i> Salvar
           Alterações</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: COMPROMISSOS DO DIA ===== -->
+  <div class="modal-overlay" id="modalDia">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header">
+        <div>
+          <h2 id="diaTitle"></h2>
+          <div class="text-xs text-muted" id="diaSubtitle"></div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalDia')"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body" id="diaBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modalDia')">Fechar</button>
       </div>
     </div>
   </div>
@@ -2582,6 +2640,7 @@
       lastError: null,
       // Inicializa como false (seguro): campos extras só são incluídos após migração confirmada
       _schemaHasExtras: false,
+      _schemaHasProcChamado: false,
 
       clone(value) {
         return JSON.parse(JSON.stringify(value));
@@ -2833,6 +2892,25 @@
           return { ...c, concluidas: m.concluidas, ativas: m.ativas, sla: m.sla };
         });
       },
+      conclusaoDia(d) {
+        // Data (YYYY-MM-DD) da conclusão real, para agrupar produção por dia/mês.
+        // Fonte: concluida_em; fallback: evento 'entregue' mais recente do historico.
+        // Uso exclusivo da relação de produção — o SLA usa apenas concluida_em.
+        if (!d || d.status !== 'entregue') return null;
+        if (d.concluidaEm) return this.slaDateOnly(d.concluidaEm);
+        const hist = Array.isArray(d.historico) ? d.historico : [];
+        for (const h of hist) {
+          if (!/entreg/i.test(String((h && h.texto) || ''))) continue;
+          const raw = String((h && h.data) || '').trim();
+          const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+          if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+          const iso = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+          if (iso) return iso[1];
+          const t = new Date(raw);
+          if (!Number.isNaN(t.getTime())) return t.toISOString().slice(0, 10);
+        }
+        return null;
+      },
 
       clienteFromRow(row) {
         return {
@@ -2862,6 +2940,8 @@
           reclamante: String(row.reclamante || ''),
           clienteId: String(row.cliente_id || ''),
           natureza: String(row.natureza || ''),
+          procurador: String(row.procurador || ''),
+          chamado: String(row.chamado || ''),
           tipo: String(row.tipo),
           origemCalculo: String(row.origem_calculo || ''),
           responsavelId: String(row.responsavel_id || ''),
@@ -2946,6 +3026,18 @@
               // Column not found = migration not yet applied — keep false (safe default)
               this._schemaHasExtras = false;
               console.warn('[DLS] Colunas extras (natureza/origem_calculo/allowed_user_ids) não encontradas. Execute dls_migration_v2.sql.');
+            }
+          }
+
+          // Auto-detect se a migração procurador/chamado foi aplicada.
+          if (this._schemaHasProcChamado === false) {
+            try {
+              this.select('dls_demandas', { select: 'id,procurador', limit: '1' });
+              this._schemaHasProcChamado = true;
+              console.info('[DLS] Migração procurador/chamado detectada.');
+            } catch(e) {
+              this._schemaHasProcChamado = false;
+              console.warn('[DLS] Colunas procurador/chamado não encontradas. Execute dls_migration_v4_procurador_chamado.sql.');
             }
           }
 
@@ -3113,31 +3205,33 @@
           row.origem_calculo = this.emptyToNull(item.origemCalculo);
           row.allowed_user_ids = Array.isArray(item.allowedUserIds) ? item.allowedUserIds : [];
         }
+        // Colunas procurador/chamado (dls_migration_v4_procurador_chamado.sql)
+        // Chamado é opcional: vazio é omitido como null.
+        if (this._schemaHasProcChamado === true) {
+          row.procurador = this.emptyToNull(item.procurador);
+          row.chamado = this.emptyToNull(item.chamado);
+        }
         return row;
       },
 
-      // saveRow with automatic retry stripping extra columns on 400 error
+      // saveRow with automatic retry stripping new columns on 400 error
       saveRowDemanda(demandaItem) {
-        // If schema has extras confirmed, try with them first
-        if (this._schemaHasExtras === true) {
-          const row = this.demandaToRow(demandaItem); // includes extras
-          try {
-            return this.upsert('dls_demandas', [row], 'id');
-          } catch(e) {
-            const msg = String(e?.message || '').toLowerCase();
-            if (msg.includes('allowed_user_ids') || msg.includes('natureza') || msg.includes('origem_calculo') || msg.includes('schema cache') || msg.includes('400')) {
-              // Schema changed / migration rolled back — disable extras and retry
-              this._schemaHasExtras = false;
-              console.warn('[DLS] Colunas extras rejeitadas pelo Supabase. Salvando sem campos extras.');
-              const safeRow = this.demandaToRow(demandaItem); // now omits extras
-              return this.upsert('dls_demandas', [safeRow], 'id');
-            }
-            throw e;
-          }
-        } else {
-          // No extras — safe path, always works
-          const row = this.demandaToRow(demandaItem);
+        const row = this.demandaToRow(demandaItem);
+        try {
           return this.upsert('dls_demandas', [row], 'id');
+        } catch(e) {
+          const msg = String(e?.message || '').toLowerCase();
+          const extrasHit = msg.includes('allowed_user_ids') || msg.includes('natureza') || msg.includes('origem_calculo');
+          const procHit = msg.includes('procurador') || msg.includes('chamado');
+          if (extrasHit || procHit || msg.includes('schema cache') || msg.includes('400')) {
+            // Migração ausente ou revertida — desabilita os campos rejeitados e tenta de novo
+            if (extrasHit || msg.includes('schema cache') || msg.includes('400')) this._schemaHasExtras = false;
+            if (procHit || msg.includes('schema cache') || msg.includes('400')) this._schemaHasProcChamado = false;
+            console.warn('[DLS] Colunas novas rejeitadas pelo Supabase. Salvando sem esses campos.');
+            const safeRow = this.demandaToRow(demandaItem); // agora omite os campos rejeitados
+            return this.upsert('dls_demandas', [safeRow], 'id');
+          }
+          throw e;
         }
       },
 
@@ -4012,8 +4106,8 @@
       if (!AUTH.require('demandas.manage')) return;
       document.getElementById('demandaEditId').value = '';
       document.getElementById('modalDemandaTitle').innerHTML = '<i class="fas fa-plus-circle" style="color:var(--blue-light);margin-right:8px"></i>Nova Demanda';
-      ['demandaProcesso', 'demandaReclamante', 'demandaObs', 'demandaValor'].forEach(id => document.getElementById(id).value = '');
-      ['demandaCliente', 'demandaNatureza', 'demandaTipo', 'demandaOrigemCalculo', 'demandaResponsavel', 'demandaPrioridade', 'demandaOrigem', 'demandaStatus'].forEach(id => { const el = document.getElementById(id); if (el) el.selectedIndex = 0; });
+      ['demandaProcesso', 'demandaReclamante', 'demandaProcurador', 'demandaChamado', 'demandaObs', 'demandaValor'].forEach(id => document.getElementById(id).value = '');
+      ['demandaCliente', 'demandaTipo', 'demandaOrigemCalculo', 'demandaResponsavel', 'demandaPrioridade', 'demandaOrigem', 'demandaStatus'].forEach(id => { const el = document.getElementById(id); if (el) el.selectedIndex = 0; });
       document.getElementById('demandaDataRequisicao').value = dateInputValue();
       document.getElementById('demandaPrazo').value = '';
       populateDemandasSelects();
@@ -4032,7 +4126,8 @@
       document.getElementById('demandaReclamante').value = d.reclamante || '';
       document.getElementById('demandaCliente').value = d.clienteId || '';
       document.getElementById('demandaDataRequisicao').value = demandaDataRequisicao(d) || dateInputValue(d.criadoEm);
-      document.getElementById('demandaNatureza').value = d.natureza || '';
+      document.getElementById('demandaProcurador').value = d.procurador || '';
+      document.getElementById('demandaChamado').value = d.chamado || '';
       document.getElementById('demandaTipo').value = d.tipo || '';
       document.getElementById('demandaOrigemCalculo').value = d.origemCalculo || '';
       document.getElementById('demandaResponsavel').value = d.responsavelId || '';
@@ -4067,11 +4162,12 @@
     function salvarDemanda() {
       if (!AUTH.require('demandas.manage')) return;
       const cliente = document.getElementById('demandaCliente').value;
-      const natureza = document.getElementById('demandaNatureza').value;
+      const procurador = document.getElementById('demandaProcurador').value.trim();
+      const chamado = document.getElementById('demandaChamado').value.trim();
       const tipo = document.getElementById('demandaTipo').value;
       const prazo = document.getElementById('demandaPrazo').value;
       if (!cliente) { showToast('Selecione o cliente.', true); return; }
-      if (!natureza) { showToast('Selecione a natureza da demanda.', true); return; }
+      if (!procurador) { showToast('Informe o procurador responsável.', true); return; }
       if (!tipo) { showToast('Selecione o tipo de cálculo.', true); return; }
       if (!prazo) { showToast('Informe o prazo.', true); return; }
       const editId = document.getElementById('demandaEditId').value;
@@ -4086,7 +4182,8 @@
         reclamante: document.getElementById('demandaReclamante').value,
         dataRequisicao: document.getElementById('demandaDataRequisicao').value,
         clienteId: cliente,
-        natureza,
+        procurador,
+        chamado,
         tipo,
         origemCalculo: document.getElementById('demandaOrigemCalculo').value,
         responsavelId: document.getElementById('demandaResponsavel').value,
@@ -4124,6 +4221,67 @@
     }
 
     let filterStatus = 'todas';
+    let demandasSort = 'padrao';
+    const PRIO_ORDER = { urgente: 0, alta: 1, media: 2, baixa: 3 };
+    function sortDemandasList(list) {
+      const arr = [...list];
+      const byNum = (a, b) => String(a.numero || '').localeCompare(String(b.numero || ''), 'pt-BR');
+      switch (demandasSort) {
+        case 'criacao_desc':
+        case 'criacao_asc': {
+          const desc = demandasSort === 'criacao_desc';
+          arr.sort((a, b) => {
+            const ka = a.criadoEm || a.dataRequisicao || '';
+            const kb = b.criadoEm || b.dataRequisicao || '';
+            if (!ka && !kb) return byNum(a, b);
+            if (!ka) return 1;
+            if (!kb) return -1;
+            const cmp = desc ? kb.localeCompare(ka) : ka.localeCompare(kb);
+            return cmp || byNum(a, b);
+          });
+          break;
+        }
+        case 'prazo_asc':
+        case 'prazo_desc': {
+          const desc = demandasSort === 'prazo_desc';
+          arr.sort((a, b) => {
+            const ka = String(a.prazo || '').slice(0, 10);
+            const kb = String(b.prazo || '').slice(0, 10);
+            if (!ka && !kb) return byNum(a, b);
+            if (!ka) return 1;
+            if (!kb) return -1;
+            const cmp = desc ? kb.localeCompare(ka) : ka.localeCompare(kb);
+            return cmp || byNum(a, b);
+          });
+          break;
+        }
+        case 'alfa_asc':
+        case 'alfa_desc': {
+          const desc = demandasSort === 'alfa_desc';
+          arr.sort((a, b) => {
+            const cmp = clienteNome(a.clienteId).localeCompare(clienteNome(b.clienteId), 'pt-BR');
+            if (cmp !== 0) return desc ? -cmp : cmp;
+            return byNum(a, b);
+          });
+          break;
+        }
+        case 'prio': {
+          arr.sort((a, b) => {
+            const pa = PRIO_ORDER[a.prioridade] ?? 99;
+            const pb = PRIO_ORDER[b.prioridade] ?? 99;
+            if (pa !== pb) return pa - pb;
+            const ka = String(a.prazo || '').slice(0, 10);
+            const kb = String(b.prazo || '').slice(0, 10);
+            if (ka && kb && ka !== kb) return ka.localeCompare(kb);
+            if (!ka && kb) return 1;
+            if (ka && !kb) return -1;
+            return byNum(a, b);
+          });
+          break;
+        }
+      }
+      return arr;
+    }
     function filterDemandas(btn, status) {
       btn.closest('.filters').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -4167,10 +4325,22 @@
       if (fca) demandas = demandas.filter(d => d.responsavelId === fca);
       const fr = (document.getElementById('filterReclamante') || {}).value || '';
       if (fr.length > 1) { const frl = fr.toLowerCase(); demandas = demandas.filter(d => (d.reclamante || '').toLowerCase().includes(frl)); }
+      const fp = (document.getElementById('filterPrazo') || {}).value || '';
+      if (fp) {
+        const hojeP = hojeLocal();
+        const em7d = (() => { const t = new Date(); t.setDate(t.getDate() + 7); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); })();
+        const emAberto = (d) => !['entregue', 'cancelada'].includes(d.status);
+        if (fp === 'vencidas') demandas = demandas.filter(d => (d.prazo || '') !== '' && String(d.prazo).slice(0, 10) < hojeP && emAberto(d));
+        else if (fp === 'hoje') demandas = demandas.filter(d => String(d.prazo || '').slice(0, 10) === hojeP && emAberto(d));
+        else if (fp === '7dias') demandas = demandas.filter(d => { const p = String(d.prazo || '').slice(0, 10); return p !== '' && p >= hojeP && p <= em7d && emAberto(d); });
+        else if (fp === 'mes') demandas = demandas.filter(d => String(d.prazo || '').slice(0, 7) === hojeP.slice(0, 7) && emAberto(d));
+        else if (fp === 'sem') demandas = demandas.filter(d => !(d.prazo || ''));
+      }
       if (q.length > 1) {
         const ql = q.toLowerCase();
-        demandas = demandas.filter(d => (d.numero || '').toLowerCase().includes(ql) || (clienteNome(d.clienteId) || '').toLowerCase().includes(ql) || (d.processo || '').toLowerCase().includes(ql) || (d.tipo || '').toLowerCase().includes(ql) || (d.reclamante || '').toLowerCase().includes(ql));
+        demandas = demandas.filter(d => (d.numero || '').toLowerCase().includes(ql) || (clienteNome(d.clienteId) || '').toLowerCase().includes(ql) || (d.processo || '').toLowerCase().includes(ql) || (d.chamado || '').toLowerCase().includes(ql) || (d.tipo || '').toLowerCase().includes(ql) || (d.reclamante || '').toLowerCase().includes(ql));
       }
+      demandas = sortDemandasList(demandas);
       const total = demandas.length;
       const totalPages = Math.max(1, Math.ceil(total / DEMANDAS_PER_PAGE));
       if (demandasPage > totalPages) demandasPage = totalPages;
@@ -4188,7 +4358,7 @@
           const numColor = d.status === 'atrasada' ? 'var(--red-bright)' : 'var(--blue-light)';
           return `<tr>
       <td><strong style="color:${numColor}">${d.numero}</strong></td>
-      <td class="text-xs text-muted">${d.processo || '—'}</td>
+      <td class="text-xs text-muted">${d.processo || '—'}${d.chamado ? `<br><span style="color:var(--blue-light)">Chamado: ${d.chamado}</span>` : ''}</td>
       <td class="text-xs">${d.reclamante || '—'}</td>
       <td>${clienteNome(d.clienteId)}</td>
       <td>${d.tipo}</td>
@@ -4248,7 +4418,8 @@
       <div><div class="form-label">Processo Judicial</div><div style="padding:8px 0" class="text-sm">${d.processo || '—'}</div></div>
       <div><div class="form-label">Reclamante / Parte</div><div style="padding:8px 0" class="text-sm">${d.reclamante || '—'}</div></div>
       <div><div class="form-label">Data de Requisição</div><div style="padding:8px 0" class="text-sm">${fmtDateOnly(d.dataRequisicao) || '—'}</div></div>
-      <div><div class="form-label">Natureza</div><div style="padding:8px 0">${d.natureza ? `<span class="badge andamento">${d.natureza}</span>` : '—'}</div></div>
+      <div><div class="form-label">Procurador Responsável</div><div style="padding:8px 0" class="text-sm">${d.procurador || '—'}</div></div>
+      <div><div class="form-label">Chamado</div><div style="padding:8px 0" class="text-sm">${d.chamado || '—'}</div></div>
       <div><div class="form-label">Tipo de Cálculo</div><div style="padding:8px 0"><span class="badge andamento">${d.tipo}</span></div></div>
       <div><div class="form-label">Origem do Cálculo (Ente)</div><div style="padding:8px 0" class="text-sm">${d.origemCalculo || '—'}</div></div>
       <div><div class="form-label">Status</div><div style="padding:8px 0">${statusBadge(d.status)}</div></div>
@@ -4322,8 +4493,8 @@
 
     function exportarDemandas() {
       const demandas = DB.getDemandas();
-      let csv = '\uFEFF' + 'Número,Processo,Reclamante,Cliente,Tipo,Responsável,Data Requisição,Prazo,Prioridade,Status\n';
-      demandas.forEach(d => { csv += `"${d.numero}","${d.processo || ''}","${d.reclamante || ''}","${clienteNome(d.clienteId)}","${d.tipo}","${calcNome(d.responsavelId)}","${fmtDate(d.criadoEm)}","${d.prazo || ''}","${d.prioridade}","${d.status}"\n`; });
+      let csv = '\uFEFF' + 'Número,Processo,Reclamante,Cliente,Tipo,Procurador,Chamado,Responsável,Data Requisição,Prazo,Prioridade,Status\n';
+      demandas.forEach(d => { csv += `"${d.numero}","${d.processo || ''}","${d.reclamante || ''}","${clienteNome(d.clienteId)}","${d.tipo}","${d.procurador || ''}","${d.chamado || ''}","${calcNome(d.responsavelId)}","${fmtDate(d.criadoEm)}","${d.prazo || ''}","${d.prioridade}","${d.status}"\n`; });
       downloadFile('demandas_dls.csv', csv, 'text/csv;charset=utf-8;');
     }
 
@@ -4400,10 +4571,16 @@
       const grid = document.getElementById('calcGrid');
       if (!calcs.length) { grid.innerHTML = `<div style="grid-column:1/-1"><div class="empty-state"><i class="fas fa-users"></i><p>Nenhum calculista cadastrado. Clique em "Novo Calculista" para começar.</p></div></div>`; return; }
       const maxAtivas = Math.max(...calcs.map(c => c.ativas || 0), 1);
+      const prodBase = DB.getAllDemandas().filter(d => d.status === 'entregue');
+      const prodDia = new Map(prodBase.map(d => [d.id, DB.conclusaoDia(d)]));
+      const hojeProd = hojeLocal();
+      const mesProd = hojeProd.slice(0, 7);
       grid.innerHTML = calcs.map((c, i) => {
         // Métricas reais vindas da camada de dados (agregação de dls_demandas). Não recalcular aqui.
         const ativas = Number(c.ativas ?? 0);
         const concluidas = Number(c.concluidas ?? 0);
+        const prodHoje = prodBase.filter(d => d.responsavelId === c.id && prodDia.get(d.id) === hojeProd).length;
+        const prodMes = prodBase.filter(d => d.responsavelId === c.id && (prodDia.get(d.id) || '').startsWith(mesProd)).length;
         const slaNull = (c.sla === null || c.sla === undefined);
         const slaTxt = slaNull ? '—' : (Number(c.sla) + '%');
         const slaColor = slaNull ? 'var(--white-40)' : (c.sla >= 90 ? 'var(--success-light)' : 'var(--amber)');
@@ -4433,6 +4610,7 @@
       <div class="mb8 text-xs text-muted">Carga atual — ${ativas}/${c.meta || 20} demandas (${pct}%)</div>
       <div class="progress mb8"><div class="progress-bar ${barColor}" style="width:${pct}%"></div></div>
       <div class="text-xs text-muted mb12">${ativas} demandas ativas · Tempo médio ${c.tempoMedio || 2.0} dias</div>
+      <div class="text-xs text-muted mb12">Produção — hoje: <strong style="color:var(--white-90)">${prodHoje}</strong> · no mês: <strong style="color:var(--white-90)">${prodMes}</strong></div>
       <div class="flex gap4">
         <button class="btn btn-ghost btn-sm flex1" onclick="openModalCalc('${c.id}')"><i class="fas fa-edit"></i> Editar</button>
         <button class="btn btn-ghost btn-sm" onclick="excluirCalculista('${c.id}')" style="color:var(--red-bright)" title="Excluir"><i class="fas fa-trash"></i></button>
@@ -4810,13 +4988,58 @@
       for (let d = 1; d <= daysInMonth; d++) {
         const isToday = d === today && month === todayM && year === todayY;
         const ev = events[d] || [];
-        html += `<div style="min-height:80px;padding:8px;border-bottom:1px solid var(--navy-border);border-right:1px solid var(--navy-border);${isToday ? 'background:rgba(21,101,192,.1)' : ''}">
+        html += `<div onclick="openDia(${year},${month + 1},${d})" title="Ver compromissos do dia" style="min-height:80px;padding:8px;border-bottom:1px solid var(--navy-border);border-right:1px solid var(--navy-border);cursor:pointer;${isToday ? 'background:rgba(21,101,192,.1)' : ''}">
       <div style="font-size:13px;font-weight:${isToday ? '800' : '500'};color:${isToday ? 'var(--blue-light)' : 'var(--white-70)'};margin-bottom:4px">${d}${isToday ? ' ●' : ''}</div>
       ${ev.map(e => `<div style="font-size:10px;color:${e.color};background:rgba(0,0,0,.3);padding:2px 5px;border-radius:4px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.text}">${e.text}</div>`).join('')}
     </div>`;
       }
       html += `</div>`;
       grid.innerHTML = html;
+    }
+
+    function openDia(y, m, d) {
+      const ds = y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      document.getElementById('diaTitle').textContent = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+      const isAdmin = AUTH.isAdmin();
+      const userId = window.AUTH?.user?.id;
+      const demandas = DB.getDemandas().filter(x => String(x.prazo || '').slice(0, 10) === ds && !['entregue', 'cancelada'].includes(x.status));
+      const contratos = isAdmin ? DB.getClientes().filter(c => (c.contratoFim || '') === ds) : [];
+      const reunioes = DB.getReunioes().filter(r => {
+        if (!r.dataHora) return false;
+        const rd = new Date(r.dataHora);
+        if (isNaN(rd.getTime())) return false;
+        if (rd.getFullYear() !== y || rd.getMonth() + 1 !== m || rd.getDate() !== d) return false;
+        return r.criadoPor === userId || (Array.isArray(r.participantIds) && r.participantIds.includes(userId)) || isAdmin;
+      });
+      const total = demandas.length + contratos.length + reunioes.length;
+      document.getElementById('diaSubtitle').textContent = total === 0
+        ? 'Nenhum compromisso neste dia.'
+        : `${total} compromisso(s) neste dia. Clique em uma demanda para abrir as informações.`;
+      const secLabel = (t) => `<div style="font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--white-40);margin:14px 0 8px">${t}</div>`;
+      let html = '';
+      if (demandas.length) {
+        html += secLabel(`Demandas com prazo no dia (${demandas.length})`);
+        html += demandas.map(x => `
+        <div class="urgency-item" style="cursor:pointer" onclick="closeModal('modalDia');openDetalhe('${x.id}')">
+          <div class="urgency-info"><div class="urgency-title">${x.numero} — ${x.tipo}</div><div class="urgency-meta">Proc. ${x.processo || '—'}${x.chamado ? ` · Chamado: ${x.chamado}` : ''} · ${clienteNome(x.clienteId)} · ${calcNome(x.responsavelId) || 'Sem responsável'}</div></div>
+          ${statusBadge(x.status)}
+        </div>`).join('');
+      }
+      if (reunioes.length) {
+        html += secLabel(`Reuniões (${reunioes.length})`);
+        html += reunioes.map(r => {
+          const rd = new Date(r.dataHora);
+          const hh = rd.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          return `<div class="urgency-item"><div class="urgency-info"><div class="urgency-title">🤝 ${hh} — ${r.titulo || '(sem título)'}</div><div class="urgency-meta">${r.local || ''}</div></div></div>`;
+        }).join('');
+      }
+      if (contratos.length) {
+        html += secLabel(`Vencimento de contratos (${contratos.length})`);
+        html += contratos.map(c => `<div class="urgency-item"><div class="urgency-info"><div class="urgency-title">📄 ${c.nome}</div><div class="urgency-meta">Contrato vence hoje</div></div></div>`).join('');
+      }
+      if (!total) html = `<div class="empty-state"><i class="fas fa-calendar-day"></i><p>Nenhuma demanda ou compromisso neste dia.</p></div>`;
+      document.getElementById('diaBody').innerHTML = html;
+      openModal('modalDia');
     }
 
     // ============================================================
@@ -4849,6 +5072,53 @@
       }).join('');
       buildChartRelatorio();
       buildChartTipos();
+      renderProducao();
+    }
+
+    let prodMes = '';
+    function prodMesAtual() {
+      const now = new Date();
+      return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    }
+    function hojeLocal() {
+      const now = new Date();
+      return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    }
+    function setProdMes(v) {
+      prodMes = (/^\d{4}-\d{2}$/.test(v || '')) ? v : '';
+      renderProducao();
+    }
+    function renderProducao() {
+      const headEl = document.getElementById('prodDetalheHead');
+      if (!headEl) return;
+      const mes = prodMes || prodMesAtual();
+      const mesInput = document.getElementById('prodMes');
+      if (mesInput && !mesInput.value) mesInput.value = mes;
+      const hoje = hojeLocal();
+      const base = AUTH.isAdmin() ? DB.getAllDemandas() : DB.getDemandas();
+      const calcs = DB.getCalculistas();
+      const entregues = base.filter(d => d.status === 'entregue');
+      const diaDe = new Map(entregues.map(d => [d.id, DB.conclusaoDia(d)]));
+      const noDia = (c, dia) => entregues.filter(d => d.responsavelId === c.id && diaDe.get(d.id) === dia).length;
+      const noMes = (c) => entregues.filter(d => d.responsavelId === c.id && (diaDe.get(d.id) || '').startsWith(mes)).length;
+      const total = (c) => entregues.filter(d => d.responsavelId === c.id).length;
+      const semData = entregues.filter(d => !diaDe.get(d.id)).length;
+      document.getElementById('prodResumoTable').innerHTML = calcs.map(c =>
+        `<tr><td><strong>${c.nome}</strong></td><td><strong>${noDia(c, hoje)}</strong></td><td>${noMes(c)}</td><td>${total(c)}</td></tr>`
+      ).join('') || `<tr><td colspan="4"><div class="empty-state"><i class="fas fa-users"></i><p>Nenhum calculista cadastrado.</p></div></td></tr>`;
+      const dias = [...new Set(entregues.map(d => diaDe.get(d.id)).filter(dia => dia && dia.startsWith(mes)))].sort().reverse();
+      document.getElementById('prodMesLabel').textContent = mes.split('-').reverse().join('/');
+      headEl.innerHTML = `<tr><th>Data</th>${calcs.map(c => `<th>${c.nome.split(' ')[0]}</th>`).join('')}<th>Total</th></tr>`;
+      document.getElementById('prodDetalheBody').innerHTML = dias.length ? dias.map(dia => {
+        const cells = calcs.map(c => noDia(c, dia));
+        const tot = cells.reduce((a, b) => a + b, 0);
+        const [y, m, dd] = dia.split('-');
+        return `<tr><td><strong>${dd}/${m}/${y}</strong></td>${cells.map(v => `<td>${v || '—'}</td>`).join('')}<td><strong>${tot}</strong></td></tr>`;
+      }).join('') + `<tr><td><strong>Total no mês</strong></td>${calcs.map(c => `<td><strong>${noMes(c)}</strong></td>`).join('')}<td><strong>${calcs.reduce((a, c) => a + noMes(c), 0)}</strong></td></tr>`
+        : `<tr><td colspan="${calcs.length + 2}"><div class="empty-state"><i class="fas fa-calendar-check"></i><p>Nenhuma conclusão neste mês.</p></div></td></tr>`;
+      document.getElementById('prodSemData').textContent = semData
+        ? `${semData} entrega(s) sem data de conclusão não entram na relação.`
+        : '';
     }
 
     function exportarRelatorioCsvLegacy() {
@@ -4870,7 +5140,17 @@
       }
 
       const calcs = DB.getCalculistas();
-      const demandas = DB.getDemandas();
+      let demandas = DB.getDemandas();
+      const periodoInicio = (document.getElementById('relPeriodoInicio') || {}).value || '';
+      const periodoFim = (document.getElementById('relPeriodoFim') || {}).value || '';
+      const demandasTodas = [...demandas];
+      if (periodoInicio) demandas = demandas.filter(d => (d.criadoEm || d.dataRequisicao || '') >= periodoInicio);
+      if (periodoFim) demandas = demandas.filter(d => (d.criadoEm || d.dataRequisicao || '').substring(0,10) <= periodoFim);
+      const fmtPeriodo = (v) => v ? v.split('-').reverse().join('/') : '';
+      const periodoLabelTxt = (periodoInicio || periodoFim) ? `${fmtPeriodo(periodoInicio) || '…'} → ${fmtPeriodo(periodoFim) || '…'}` : 'Todo o período';
+      const hojeExp = hojeLocal();
+      const mesAtualExp = hojeExp.slice(0, 7);
+      const entreguesTodas = demandasTodas.filter(d => d.status === 'entregue');
       const clientes = DB.getClientes();
       const activeStatuses = ['triagem', 'pendente', 'andamento', 'revisao', 'aguardando'];
       const entregues = demandas.filter(d => d.status === 'entregue');
@@ -4897,33 +5177,52 @@
       const statusLabel = (status) => ({ triagem: 'Triagem', pendente: 'Pendente', andamento: 'Em andamento', revisao: 'Em revisao', aguardando: 'Ag. cliente', entregue: 'Entregue', atrasada: 'Atrasada', cancelada: 'Cancelada' }[status] || status || '');
       const prioridadeLabel = (prio) => ({ urgente: 'Urgente', alta: 'Alta', media: 'Media', baixa: 'Baixa' }[prio] || prio || '');
 
-      function addSheet(name, rows, colWidths, headerRow = 0) {
+      // Padrão único de tabulação: título + gerado em + período, linha em branco,
+      // cabeçalho estilizado, zebrado, larguras fixas e autofiltro no cabeçalho.
+      function addSheetStd(name, title, header, dataRows, colWidths) {
+        const rows = [
+          [title],
+          ['Gerado em', new Date().toLocaleString('pt-BR')],
+          ['Período', periodoLabelTxt],
+          [],
+          header,
+          ...dataRows
+        ];
+        const headerRow = 4;
         const ws = XLSX.utils.aoa_to_sheet(rows);
         ws['!cols'] = colWidths.map(w => ({ wch: w }));
-        ws['!rows'] = rows.map((_, i) => ({ hpt: i === 0 ? 24 : 20 }));
+        ws['!rows'] = rows.map((_, i) => ({ hpt: (i === 0 || i === headerRow) ? 24 : 20 }));
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }];
         const range = XLSX.utils.decode_range(ws['!ref']);
         for (let R = range.s.r; R <= range.e.r; R++) {
           for (let C = range.s.c; C <= range.e.c; C++) {
             const addr = XLSX.utils.encode_cell({ r: R, c: C });
             if (!ws[addr]) continue;
-            const zebra = R % 2 === 0 ? 'F8FBFF' : 'FFFFFF';
-            ws[addr].s = R === headerRow ? headerStyle : { ...cellStyle, fill: { fgColor: { rgb: zebra } } };
+            if (R === 0) ws[addr].s = titleStyle;
+            else if (R === headerRow) ws[addr].s = headerStyle;
+            else {
+              const zebra = (R - headerRow) % 2 === 0 ? 'F8FBFF' : 'FFFFFF';
+              ws[addr].s = { ...cellStyle, fill: { fgColor: { rgb: zebra } } };
+            }
           }
         }
-        ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRow, c: 0 }, e: { r: range.e.r, c: range.e.c } }) };
+        ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRow, c: 0 }, e: { r: range.e.r, c: header.length - 1 } }) };
         XLSX.utils.book_append_sheet(wb, ws, name);
         return ws;
       }
 
+      const semData = entregues.filter(d => !DB.conclusaoDia(d)).length;
       const resumoRows = [
         ['DLS - Relatorio Gerencial'],
         ['Gerado em', new Date().toLocaleString('pt-BR')],
+        ['Período', periodoLabelTxt],
         [],
         ['Indicador', 'Valor'],
         ['Total de demandas', demandas.length],
         ['Demandas ativas', ativas.length],
         ['Entregues', entregues.length],
         ['Atrasadas', atrasadas.length],
+        ['Entregues sem data de conclusão', semData],
         ['SLA historico', `${sla}%`],
         ['Calculistas cadastrados', calcs.length],
         ['Clientes cadastrados', clientes.length],
@@ -4938,35 +5237,76 @@
         ['Atrasada', atrasadas.length],
         ['Cancelada', demandas.filter(d => d.status === 'cancelada').length]
       ];
-      const resumo = addSheet('Resumo', resumoRows, [30, 18], 3);
-      resumo['A1'].s = titleStyle;
+      const resumo = XLSX.utils.aoa_to_sheet(resumoRows);
+      resumo['!cols'] = [30, 18].map(w => ({ wch: w }));
+      resumo['!rows'] = resumoRows.map((_, i) => ({ hpt: (i === 0 || i === 4 || i === 14) ? 24 : 20 }));
       resumo['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
-      ['A4', 'B4', 'A13', 'B13'].forEach(addr => { if (resumo[addr]) resumo[addr].s = headerStyle; });
-      Object.keys(resumo).filter(a => /^B\d+$/.test(a) && !['B4', 'B13'].includes(a)).forEach(addr => { resumo[addr].s = centeredStyle; });
+      {
+        const range = XLSX.utils.decode_range(resumo['!ref']);
+        for (let R = range.s.r; R <= range.e.r; R++) {
+          for (let C = range.s.c; C <= range.e.c; C++) {
+            const addr = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!resumo[addr]) continue;
+            if (R === 0) resumo[addr].s = titleStyle;
+            else if (R === 4 || R === 14) resumo[addr].s = headerStyle;
+            else {
+              const zebra = R % 2 === 0 ? 'F8FBFF' : 'FFFFFF';
+              resumo[addr].s = { ...cellStyle, fill: { fgColor: { rgb: zebra } } };
+            }
+          }
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, resumo, 'Resumo');
+      Object.keys(resumo).filter(a => /^B\d+$/.test(a) && !['B5', 'B15'].includes(a)).forEach(addr => { resumo[addr].s = centeredStyle; });
 
-      const calcRows = [['Calculista', 'Cargo', 'Especialidade', 'Status', 'Meta', 'Ativas', 'Concluidas cad.', 'Entregues sistema', 'Atrasadas', 'SLA', 'Tempo medio', 'Observacoes']];
+      const calcHeader = ['Calculista', 'Cargo', 'Especialidade', 'Status', 'Meta', 'Ativas', 'Entregues hoje', 'Entregues mes atual', 'Entregues periodo', 'Atrasadas', 'SLA', 'Tempo medio', 'Observacoes'];
+      const calcRows = [];
       calcs.forEach(c => {
         const ativasCalc = demandas.filter(d => d.responsavelId === c.id && activeStatuses.includes(d.status)).length;
-        const entreguesCalc = demandas.filter(d => d.responsavelId === c.id && d.status === 'entregue').length;
+        const entreguesPeriodo = demandas.filter(d => d.responsavelId === c.id && d.status === 'entregue').length;
+        const entreguesHoje = entreguesTodas.filter(d => d.responsavelId === c.id && DB.conclusaoDia(d) === hojeExp).length;
+        const entreguesMes = entreguesTodas.filter(d => d.responsavelId === c.id && (DB.conclusaoDia(d) || '').startsWith(mesAtualExp)).length;
         const atrasadasCalc = demandas.filter(d => d.responsavelId === c.id && d.status === 'atrasada').length;
-        calcRows.push([c.nome, c.cargo, c.espec, c.status, Number(c.meta || 0), ativasCalc, Number(c.concluidas || 0), entreguesCalc, atrasadasCalc, `${(c.sla === null || c.sla === undefined) ? '—' : Number(c.sla) + '%'}`, `${c.tempoMedio || 0}d`, c.obs || '']);
+        calcRows.push([c.nome, c.cargo, c.espec, c.status, Number(c.meta || 0), ativasCalc, entreguesHoje, entreguesMes, entreguesPeriodo, atrasadasCalc, `${(c.sla === null || c.sla === undefined) ? '—' : Number(c.sla) + '%'}`, `${c.tempoMedio || 0}d`, c.obs || '']);
       });
-      addSheet('Calculistas', calcRows, [28, 20, 18, 14, 10, 10, 16, 18, 12, 10, 14, 30]);
+      addSheetStd('Calculistas', 'DLS - Calculistas', calcHeader, calcRows, [28, 20, 18, 14, 10, 10, 14, 16, 16, 12, 10, 14, 30]);
 
-      const demandaRows = [['Numero', 'Processo', 'Cliente', 'Tipo', 'Responsavel', 'Data requisicao', 'Prazo', 'Prioridade', 'Status', 'Origem', 'Criado em', 'Atualizado em', 'Observacoes']];
+      const demandaHeader = ['Numero', 'Processo', 'Reclamante', 'Cliente', 'Tipo', 'Procurador', 'Chamado', 'Responsavel', 'Data requisicao', 'Prazo', 'Data conclusao', 'Prioridade', 'Status', 'Origem', 'Criado em', 'Atualizado em', 'Observacoes'];
+      const demandaRows = [];
       demandas.forEach(d => {
-        demandaRows.push([d.numero, d.processo || '', clienteById(d.clienteId), d.tipo, calcById(d.responsavelId) || 'Não atribuído', fmtDate(d.dataRequisicao), fmtDate(d.prazo), prioridadeLabel(d.prioridade), statusLabel(d.status), d.origem || '', fmtDate(d.criadoEm), fmtDate(d.updatedAt), d.obs || '']);
+        demandaRows.push([d.numero, d.processo || '', d.reclamante || '', clienteById(d.clienteId), d.tipo, d.procurador || '', d.chamado || '', calcById(d.responsavelId) || 'Não atribuído', fmtDate(d.dataRequisicao), fmtDate(d.prazo), fmtDate(DB.conclusaoDia(d)), prioridadeLabel(d.prioridade), statusLabel(d.status), d.origem || '', fmtDate(d.criadoEm), fmtDate(d.updatedAt), d.obs || '']);
       });
-      addSheet('Demandas', demandaRows, [16, 24, 28, 24, 24, 16, 14, 14, 16, 18, 16, 16, 34]);
+      addSheetStd('Demandas', 'DLS - Demandas', demandaHeader, demandaRows, [16, 24, 22, 28, 24, 24, 16, 24, 16, 14, 14, 14, 16, 18, 16, 16, 34]);
 
-      const clienteRows = [['Cliente', 'Tipo', 'CNPJ/CPF', 'Cidade', 'Contato', 'Email', 'Telefone', 'SLA contratado', 'Inicio Contrato', 'Vencimento Contrato', 'Status', 'Total historico', 'Ativas', 'Atrasadas', 'Observacoes']];
+      const clienteHeader = ['Cliente', 'Tipo', 'CNPJ/CPF', 'Cidade', 'Contato', 'Email', 'Telefone', 'SLA contratado', 'Inicio Contrato', 'Vencimento Contrato', 'Status', 'Total historico', 'Ativas', 'Atrasadas', 'Observacoes'];
+      const clienteRows = [];
       clientes.forEach(c => {
         clienteRows.push([c.nome, c.tipo, c.cnpj || '', c.cidade || '', c.contato || '', c.email || '', c.tel || '', `${c.slaContratado || 0}%`, c.contratoInicio || '', c.contratoFim || '', c.statusRel, Number(c.totalHistorico || 0), demandas.filter(d => d.clienteId === c.id && activeStatuses.includes(d.status)).length, demandas.filter(d => d.clienteId === c.id && d.status === 'atrasada').length, c.obs || '']);
       });
-      addSheet('Clientes', clienteRows, [30, 14, 20, 24, 24, 30, 18, 16, 16, 18, 14, 16, 10, 12, 34]);
+      addSheetStd('Clientes', 'DLS - Clientes', clienteHeader, clienteRows, [30, 14, 20, 24, 24, 30, 18, 16, 16, 18, 14, 16, 10, 12, 34]);
+
+      const diaDeExp = new Map(entregues.map(d => [d.id, DB.conclusaoDia(d)]));
+      const prodDiaria = [];
+      [...new Set(entregues.map(d => diaDeExp.get(d.id)).filter(Boolean))].sort().forEach(dia => {
+        calcs.forEach(c => {
+          const q = entregues.filter(d => d.responsavelId === c.id && diaDeExp.get(d.id) === dia).length;
+          if (q > 0) prodDiaria.push([fmtDate(dia), c.nome, q]);
+        });
+      });
+      addSheetStd('Producao diaria', 'DLS - Producao diaria por calculista', ['Data', 'Calculista', 'Concluidas'], prodDiaria, [14, 30, 12]);
+
+      const prodMensal = [];
+      [...new Set(entregues.map(d => (diaDeExp.get(d.id) || '').slice(0, 7)).filter(Boolean))].sort().forEach(mes => {
+        calcs.forEach(c => {
+          const q = entregues.filter(d => d.responsavelId === c.id && (diaDeExp.get(d.id) || '').startsWith(mes)).length;
+          if (q > 0) prodMensal.push([mes.split('-').reverse().join('/'), c.nome, q]);
+        });
+      });
+      addSheetStd('Producao mensal', 'DLS - Producao mensal por calculista', ['Mes', 'Calculista', 'Concluidas'], prodMensal, [12, 30, 12]);
 
       const dateStamp = new Date().toISOString().split('T')[0];
-      XLSX.writeFile(wb, `relatorio_dls_${dateStamp}.xlsx`);
+      const perTag = (periodoInicio || periodoFim) ? `_de${(periodoInicio || '').replace(/-/g, '')}_ate${(periodoFim || '').replace(/-/g, '')}` : '_completo';
+      XLSX.writeFile(wb, `relatorio_dls_${dateStamp}${perTag}.xlsx`);
       showToast('Relatorio Excel exportado com sucesso!');
     }
 
@@ -5259,7 +5599,12 @@
     // ============================================================
     //  NOTIFICATIONS
     // ============================================================
-    function toggleNotif() { document.getElementById('notifPanel').classList.toggle('open'); }
+    function toggleNotif() {
+      const p = document.getElementById('notifPanel');
+      const willOpen = !p.classList.contains('open');
+      p.classList.toggle('open');
+      if (willOpen) { try { buildNotifs(); } catch(e) {} }
+    }
     function buildNotifs() {
       const demandas = DB.getDemandas();
       const atrasadas = demandas.filter(d => d.prazo && new Date(d.prazo + 'T23:59:59') < new Date() && !['entregue', 'cancelada'].includes(d.status));
@@ -5269,6 +5614,26 @@
       atrasadas.forEach(d => { html += `<div class="notif-item urgente"><div class="notif-title">⚠ Prazo Vencido — ${d.numero}</div><div class="notif-desc">${d.tipo} — ${clienteNome(d.clienteId)}</div><div class="notif-time">Vencida</div></div>`; });
       urgentes.filter(d => !atrasadas.find(a => a.id === d.id)).forEach(d => { html += `<div class="notif-item urgente"><div class="notif-title">🔴 Urgente — ${d.numero}</div><div class="notif-desc">${d.tipo} — ${clienteNome(d.clienteId)}</div><div class="notif-time">Prazo: ${d.prazo || '—'}</div></div>`; });
       recentes.forEach(d => { html += `<div class="notif-item info"><div class="notif-title">📥 Nova demanda — ${d.numero}</div><div class="notif-desc">${d.tipo} — ${clienteNome(d.clienteId)}</div><div class="notif-time">${fmtDate(d.criadoEm)}</div></div>`; });
+      // Contratos: avisa quando restam 30 dias e quando restam 15 dias para o vencimento
+      const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
+      const diasPara = (fim) => Math.ceil((new Date(fim + 'T00:00:00') - hoje0) / 86400000);
+      const fmtFim = (fim) => fim.split('-').reverse().join('/');
+      DB.getClientes().forEach(c => {
+        if (!c.contratoFim) return;
+        const n = diasPara(c.contratoFim);
+        if (n <= 30 && n > 15) html += `<div class="notif-item info"><div class="notif-title">📄 Contrato vence em ${n} dias</div><div class="notif-desc">${c.nome}</div><div class="notif-time">Vencimento: ${fmtFim(c.contratoFim)}</div></div>`;
+        else if (n <= 15 && n >= 0) html += `<div class="notif-item urgente"><div class="notif-title">⚠ Contrato vence em ${n === 0 ? 'hoje' : n + (n === 1 ? ' dia' : ' dias')}</div><div class="notif-desc">${c.nome}</div><div class="notif-time">Vencimento: ${fmtFim(c.contratoFim)}</div></div>`;
+      });
+      // Reuniões: avisa quando falta 1 dia (amanhã)
+      const amanha = new Date(hoje0); amanha.setDate(amanha.getDate() + 1);
+      DB.getReunioes().forEach(r => {
+        if (!r.dataHora) return;
+        const rd = new Date(r.dataHora);
+        if (isNaN(rd.getTime())) return;
+        if (rd.getFullYear() !== amanha.getFullYear() || rd.getMonth() !== amanha.getMonth() || rd.getDate() !== amanha.getDate()) return;
+        const hh = rd.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        html += `<div class="notif-item info"><div class="notif-title">🤝 Reunião amanhã — ${hh}</div><div class="notif-desc">${r.titulo || '(sem título)'}${r.local ? ' · ' + r.local : ''}</div><div class="notif-time">Amanhã</div></div>`;
+      });
       if (!html) html = '<div class="text-xs text-muted" style="text-align:center;padding:20px">Nenhuma notificação.</div>';
       document.getElementById('notifList').innerHTML = html;
     }
