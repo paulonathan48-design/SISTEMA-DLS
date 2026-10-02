@@ -3339,9 +3339,9 @@
         const isEdit = !!data.id;
         const userName = currentUserName();
 
-        // Distribuição automática: se responsavelId vier vazio, escolhe o calculista
+        // Distribuição automática (só na criação): se responsavelId vier vazio, escolhe o calculista
         // online com menor número de demandas ativas no momento
-        if (!data.responsavelId) {
+        if (!isEdit && !data.responsavelId) {
           const calcs = this.getCalculistas().filter(c => c.status !== 'offline');
           if (calcs.length) {
             const ativoStatuses = ['triagem', 'pendente', 'andamento', 'revisao', 'aguardando', 'atrasada'];
@@ -3962,13 +3962,16 @@
     }
     function prazoLabel(prazoStr) {
       if (!prazoStr) return '<span class="text-muted">—</span>';
-      const prazo = new Date(prazoStr + 'T23:59:59');
-      const diff = Math.ceil((prazo - new Date()) / 86400000);
+      const parte = String(prazoStr).slice(0, 10);
+      const [y, m, dd] = parte.split('-').map(Number);
+      const now = new Date();
+      // Compara datas-calendário (sem hora) para não defasar 1 dia conforme o horário atual
+      const diff = Math.round((Date.UTC(y, m - 1, dd) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
       if (diff < 0) return `<span class="countdown overdue">VENCIDA há ${Math.abs(diff)} dia(s)</span>`;
       if (diff === 0) return `<span class="countdown danger">Hoje</span>`;
       if (diff <= 2) return `<span class="countdown warn">${diff} dia(s)</span>`;
-      if (diff <= 5) return `<span class="countdown warn">${prazoStr.split('-').reverse().join('/')}</span>`;
-      return `<span class="countdown ok">${prazoStr.split('-').reverse().join('/')}</span>`;
+      if (diff <= 5) return `<span class="countdown warn">${parte.split('-').reverse().join('/')}</span>`;
+      return `<span class="countdown ok">${parte.split('-').reverse().join('/')}</span>`;
     }
     function calcNome(id) { const c = DB.getCalculistas().find(x => x.id === id); return c ? c.nome : '—'; }
     function clienteNome(id) { const c = DB.getClientes().find(x => x.id === id); return c ? c.nome : '—'; }
@@ -4112,6 +4115,7 @@
       document.getElementById('demandaPrazo').value = '';
       populateDemandasSelects();
       _populateDemandaUsuarios([]); // no pre-selected
+      document.querySelectorAll('#modalNovaDemanda .form-input, #modalNovaDemanda .form-select, #modalNovaDemanda .form-textarea').forEach(el => { el.disabled = false; });
       _clearDirty('modalNovaDemanda');
       openModal('modalNovaDemanda');
     }
@@ -4121,7 +4125,7 @@
       if (!d) return;
       populateDemandasSelects();
       document.getElementById('demandaEditId').value = d.id;
-      document.getElementById('modalDemandaTitle').innerHTML = '<i class="fas fa-edit" style="color:var(--amber);margin-right:8px"></i>Editar Demanda — ' + d.numero;
+      document.getElementById('modalDemandaTitle').innerHTML = '<i class="fas fa-edit" style="color:var(--amber);margin-right:8px"></i>Editar Demanda — ' + d.numero + ' <span class="text-xs text-muted">(somente status)</span>';
       document.getElementById('demandaProcesso').value = d.processo || '';
       document.getElementById('demandaReclamante').value = d.reclamante || '';
       document.getElementById('demandaCliente').value = d.clienteId || '';
@@ -4138,6 +4142,9 @@
       document.getElementById('demandaObs').value = d.obs || '';
       document.getElementById('demandaValor').value = d.valor || '';
       _populateDemandaUsuarios(d.allowedUserIds || []);
+      // Após criada, a demanda é somente-leitura: apenas o status pode ser alterado
+      document.querySelectorAll('#modalNovaDemanda .form-input, #modalNovaDemanda .form-select, #modalNovaDemanda .form-textarea').forEach(el => { el.disabled = (el.id !== 'demandaStatus'); });
+      document.querySelectorAll('#demandaUsuariosCheckboxes input').forEach(cb => { cb.disabled = true; });
       _clearDirty('modalNovaDemanda');
       openModal('modalNovaDemanda');
     }
@@ -4171,6 +4178,30 @@
       if (!tipo) { showToast('Selecione o tipo de cálculo.', true); return; }
       if (!prazo) { showToast('Informe o prazo.', true); return; }
       const editId = document.getElementById('demandaEditId').value;
+      if (editId) {
+        // Demanda já criada: somente o status pode ser alterado (demais campos travados)
+        const orig = DB.getAllDemandas().find(x => x.id === editId);
+        if (!orig) { showToast('Demanda não encontrada.', true); return; }
+        const novoStatus = document.getElementById('demandaStatus').value;
+        const updated = { ...orig, status: novoStatus };
+        if (orig.status !== novoStatus) {
+          const sel = document.getElementById('demandaStatus');
+          const label = sel.options[sel.selectedIndex].text;
+          updated.historico = [{ data: new Date().toLocaleString('pt-BR'), texto: `Status alterado para "${label}"`, autor: currentUserName() }, ...(orig.historico || [])];
+        }
+        try {
+          DB.saveDemanda(updated);
+          _clearDirty('modalNovaDemanda');
+          closeModal('modalNovaDemanda');
+          showToast('Status atualizado!');
+          renderDemandasPage();
+          renderDashboard();
+          updateBadges();
+        } catch(err) {
+          showToast('Erro ao atualizar status: ' + (err?.message || err), true);
+        }
+        return;
+      }
       // Collect allowed user IDs from checkboxes (admin only)
       const allowedUserIds = [];
       document.querySelectorAll('#demandaUsuariosCheckboxes input[type=checkbox]:checked').forEach(cb => {
@@ -4363,7 +4394,7 @@
       <td>${clienteNome(d.clienteId)}</td>
       <td>${d.tipo}</td>
       <td>${av}</td>
-      <td class="text-xs text-muted">${fmtDate(d.criadoEm)}</td>
+      <td class="text-xs text-muted">${fmtDate(d.dataRequisicao || d.criadoEm)}</td>
       <td>${prazoLabel(d.prazo)}</td>
       <td>${prioBadge(d.prioridade)}</td>
       <td>${statusBadge(d.status)}</td>
@@ -4494,7 +4525,7 @@
     function exportarDemandas() {
       const demandas = DB.getDemandas();
       let csv = '\uFEFF' + 'Número,Processo,Reclamante,Cliente,Tipo,Procurador,Chamado,Responsável,Data Requisição,Prazo,Prioridade,Status\n';
-      demandas.forEach(d => { csv += `"${d.numero}","${d.processo || ''}","${d.reclamante || ''}","${clienteNome(d.clienteId)}","${d.tipo}","${d.procurador || ''}","${d.chamado || ''}","${calcNome(d.responsavelId)}","${fmtDate(d.criadoEm)}","${d.prazo || ''}","${d.prioridade}","${d.status}"\n`; });
+      demandas.forEach(d => { csv += `"${d.numero}","${d.processo || ''}","${d.reclamante || ''}","${clienteNome(d.clienteId)}","${d.tipo}","${d.procurador || ''}","${d.chamado || ''}","${calcNome(d.responsavelId)}","${fmtDate(d.dataRequisicao || d.criadoEm)}","${d.prazo || ''}","${d.prioridade}","${d.status}"\n`; });
       downloadFile('demandas_dls.csv', csv, 'text/csv;charset=utf-8;');
     }
 
@@ -5088,6 +5119,10 @@
       prodMes = (/^\d{4}-\d{2}$/.test(v || '')) ? v : '';
       renderProducao();
     }
+    function toggleProdDia(dia) {
+      const el = document.getElementById('prodDia-' + dia);
+      if (el) el.style.display = (el.style.display === 'none' ? '' : 'none');
+    }
     function renderProducao() {
       const headEl = document.getElementById('prodDetalheHead');
       if (!headEl) return;
@@ -5113,7 +5148,22 @@
         const cells = calcs.map(c => noDia(c, dia));
         const tot = cells.reduce((a, b) => a + b, 0);
         const [y, m, dd] = dia.split('-');
-        return `<tr><td><strong>${dd}/${m}/${y}</strong></td>${cells.map(v => `<td>${v || '—'}</td>`).join('')}<td><strong>${tot}</strong></td></tr>`;
+        const doDia = entregues.filter(d => diaDe.get(d.id) === dia);
+        const detalhe = calcs.map(c => {
+          const list = doDia.filter(d => d.responsavelId === c.id);
+          if (!list.length) return '';
+          return `<div style="margin-bottom:10px"><strong>${c.nome}</strong> <span class="text-xs text-muted">(${list.length})</span>` +
+            list.map(d => {
+              const concl = diaDe.get(d.id);
+              const cc = concl ? concl.split('-').reverse().join('/') : '—';
+              return `<div class="urgency-item" style="cursor:pointer;margin-top:6px" onclick="openDetalhe('${d.id}')">` +
+                `<div class="urgency-info"><div class="urgency-title">${d.numero} — ${d.tipo}</div>` +
+                `<div class="urgency-meta">Proc. ${d.processo || '—'}${d.chamado ? ' · Chamado: ' + d.chamado : ''} · Reclamante: ${d.reclamante || '—'} · ${clienteNome(d.clienteId)} · Procurador: ${d.procurador || '—'} · Prazo: ${d.prazo ? d.prazo.split('-').reverse().join('/') : '—'} · Concluída em: ${cc}</div></div>` +
+                `${statusBadge(d.status)}</div>`;
+            }).join('') + `</div>`;
+        }).join('');
+        return `<tr onclick="toggleProdDia('${dia}')" style="cursor:pointer" title="Clique para ver as demandas do dia"><td><strong>${dd}/${m}/${y}</strong></td>${cells.map(v => `<td>${v || '—'}</td>`).join('')}<td><strong>${tot}</strong></td></tr>` +
+          `<tr id="prodDia-${dia}" style="display:none"><td colspan="${calcs.length + 2}">${detalhe}</td></tr>`;
       }).join('') + `<tr><td><strong>Total no mês</strong></td>${calcs.map(c => `<td><strong>${noMes(c)}</strong></td>`).join('')}<td><strong>${calcs.reduce((a, c) => a + noMes(c), 0)}</strong></td></tr>`
         : `<tr><td colspan="${calcs.length + 2}"><div class="empty-state"><i class="fas fa-calendar-check"></i><p>Nenhuma conclusão neste mês.</p></div></td></tr>`;
       document.getElementById('prodSemData').textContent = semData
