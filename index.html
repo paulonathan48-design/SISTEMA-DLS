@@ -4125,7 +4125,7 @@
       if (!d) return;
       populateDemandasSelects();
       document.getElementById('demandaEditId').value = d.id;
-      document.getElementById('modalDemandaTitle').innerHTML = '<i class="fas fa-edit" style="color:var(--amber);margin-right:8px"></i>Editar Demanda — ' + d.numero + ' <span class="text-xs text-muted">(somente status)</span>';
+      document.getElementById('modalDemandaTitle').innerHTML = '<i class="fas fa-edit" style="color:var(--amber);margin-right:8px"></i>Editar Demanda — ' + d.numero + (AUTH.isAdmin() ? '' : ' <span class="text-xs text-muted">(somente status)</span>');
       document.getElementById('demandaProcesso').value = d.processo || '';
       document.getElementById('demandaReclamante').value = d.reclamante || '';
       document.getElementById('demandaCliente').value = d.clienteId || '';
@@ -4142,9 +4142,11 @@
       document.getElementById('demandaObs').value = d.obs || '';
       document.getElementById('demandaValor').value = d.valor || '';
       _populateDemandaUsuarios(d.allowedUserIds || []);
-      // Após criada, a demanda é somente-leitura: apenas o status pode ser alterado
-      document.querySelectorAll('#modalNovaDemanda .form-input, #modalNovaDemanda .form-select, #modalNovaDemanda .form-textarea').forEach(el => { el.disabled = (el.id !== 'demandaStatus'); });
-      document.querySelectorAll('#demandaUsuariosCheckboxes input').forEach(cb => { cb.disabled = true; });
+      // Após criada, a demanda é somente-leitura para usuários comuns: apenas o status pode ser alterado.
+      // Administradores mantêm edição total.
+      const travaEdicao = !AUTH.isAdmin();
+      document.querySelectorAll('#modalNovaDemanda .form-input, #modalNovaDemanda .form-select, #modalNovaDemanda .form-textarea').forEach(el => { el.disabled = travaEdicao && (el.id !== 'demandaStatus'); });
+      document.querySelectorAll('#demandaUsuariosCheckboxes input').forEach(cb => { cb.disabled = travaEdicao; });
       _clearDirty('modalNovaDemanda');
       openModal('modalNovaDemanda');
     }
@@ -4178,8 +4180,8 @@
       if (!tipo) { showToast('Selecione o tipo de cálculo.', true); return; }
       if (!prazo) { showToast('Informe o prazo.', true); return; }
       const editId = document.getElementById('demandaEditId').value;
-      if (editId) {
-        // Demanda já criada: somente o status pode ser alterado (demais campos travados)
+      if (editId && !AUTH.isAdmin()) {
+        // Usuário comum editando demanda já criada: somente o status pode ser alterado
         const orig = DB.getAllDemandas().find(x => x.id === editId);
         if (!orig) { showToast('Demanda não encontrada.', true); return; }
         const novoStatus = document.getElementById('demandaStatus').value;
@@ -4227,6 +4229,14 @@
         valor: parseFloat(document.getElementById('demandaValor').value) || 0
       };
       try {
+        if (editId) {
+          // Administrador editando: registra no histórico se o status mudou
+          const orig = DB.getAllDemandas().find(x => x.id === editId);
+          if (orig && orig.status !== data.status) {
+            const sel = document.getElementById('demandaStatus');
+            data.historico = [{ data: new Date().toLocaleString('pt-BR'), texto: `Status alterado para "${sel.options[sel.selectedIndex].text}"`, autor: currentUserName() }, ...(orig.historico || [])];
+          }
+        }
         DB.saveDemanda(data);
         _clearDirty('modalNovaDemanda');
         closeModal('modalNovaDemanda');
