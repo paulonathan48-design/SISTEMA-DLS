@@ -2305,6 +2305,7 @@
               <option value="andamento">Em Andamento</option>
               <option value="revisao">Em Revisão</option>
               <option value="aguardando">Aguardando Cliente</option>
+              <option value="atrasada">Atrasada</option>
               <option value="entregue">Entregue</option>
               <option value="cancelada">Cancelada</option>
             </select>
@@ -2371,6 +2372,7 @@
           <option value="andamento">Em Andamento</option>
           <option value="revisao">Em Revisão</option>
           <option value="aguardando">Aguardando Cliente</option>
+          <option value="atrasada">Atrasada</option>
           <option value="entregue">Entregue</option>
           <option value="cancelada">Cancelada</option>
         </select>
@@ -2891,6 +2893,43 @@
           const m = this.calcMetricasReais(c.id, all);
           return { ...c, concluidas: m.concluidas, ativas: m.ativas, sla: m.sla };
         });
+      },
+      // Retorna true se o usuário definiu manualmente o status da demanda APÓS o prazo vencer.
+      // O histórico é gravado do mais recente para o mais antigo (unshift).
+      // Eventos do sistema ('marcado automaticamente como Atrasada') são ignorados.
+      // Assim, o vencimento automático continua marcando demandas que ninguém mexeu,
+      // mas não sobrescreve uma escolha explícita do usuário.
+      statusDefinidoManualmente(d) {
+        if (!d) return false;
+        const hist = Array.isArray(d.historico) ? d.historico : [];
+        const manual = hist.find(h => {
+          const texto = String((h && h.texto) || '');
+          const autor = String((h && h.autor) || '').trim().toLowerCase();
+          return /status alterado para/i.test(texto) && autor !== 'sistema';
+        });
+        if (!manual) return false;
+        const ts = this.parseDataBR(manual.data);
+        if (!ts) return false;
+        const prazo = String(d.prazo || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(prazo)) return false;
+        const fimPrazo = new Date(prazo + 'T23:59:59');
+        return ts > fimPrazo;
+      },
+      parseDataBR(value) {
+        if (!value) return null;
+        const raw = String(value).trim();
+        const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[,\s]+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (br) {
+          const d = new Date(+br[3], +br[2] - 1, +br[1], +(br[4] || 0), +(br[5] || 0), +(br[6] || 0));
+          return isNaN(d.getTime()) ? null : d;
+        }
+        const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (iso) {
+          const d = new Date(+iso[1], +iso[2] - 1, +iso[3], +(iso[4] || 0), +(iso[5] || 0), +(iso[6] || 0));
+          return isNaN(d.getTime()) ? null : d;
+        }
+        const t = new Date(raw);
+        return isNaN(t.getTime()) ? null : t;
       },
       conclusaoDia(d) {
         // Data (YYYY-MM-DD) da conclusão real, para agrupar produção por dia/mês.
@@ -5840,21 +5879,26 @@
           if (dot) dot.style.display = count > 0 ? 'block' : 'none';
         })();
 
-        // Auto-mark overdue
+        // Auto-mark overdue — NÃO sobrescreve status definido manualmente pelo usuário.
+        // Uma demanda só é marcada como 'atrasada' automaticamente quando o usuário
+        // ainda não mexeu no status dela (último evento do histórico não é manual).
         (function () {
           const demandas = DB.getAllDemandas();
           let changed = false;
+          const alteradas = [];
           demandas.forEach(d => {
             if (d.prazo && new Date(d.prazo + 'T23:59:59') < new Date() && !['entregue', 'cancelada', 'atrasada'].includes(d.status)) {
+              if (DB.statusDefinidoManualmente(d)) return; // usuário já definiu o status — não sobrescrever
               d.status = 'atrasada';
               d.historico = d.historico || [];
               d.historico.unshift({ data: new Date().toLocaleString('pt-BR'), texto: 'Prazo vencido — marcado automaticamente como Atrasada', autor: 'Sistema' });
+              alteradas.push(d);
               changed = true;
             }
           });
           if (changed) {
-            // Surgical: only save the rows that changed status
-            demandas.filter(d => d.status === 'atrasada').forEach(d => {
+            // Surgical: only save the rows actually changed by the auto-mark
+            alteradas.forEach(d => {
               try { DB.saveRowDemanda(d); } catch(e) {}
             });
             if (DB.cache) DB.cache[DB.KEY_DEMANDAS] = demandas;
