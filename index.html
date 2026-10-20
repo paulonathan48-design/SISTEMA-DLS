@@ -2377,11 +2377,16 @@
           <option value="cancelada">Cancelada</option>
         </select>
         <button class="btn btn-ghost" onclick="closeModal('modalDetalhe')">Fechar</button>
+        <button class="btn btn-ghost btn-sm" onclick="imprimirHistorico()" title="Imprimir histórico da demanda"><i class="fas fa-print"></i> Imprimir histórico</button>
         <button class="btn btn-primary" onclick="salvarStatusDetalhe()"><i class="fas fa-save"></i> Salvar
           Alterações</button>
       </div>
     </div>
   </div>
+
+  <!-- Frame oculto usado para gerar o histórico imprimível da demanda -->
+  <iframe id="dlsPrintFrame" title="Impressão" aria-hidden="true"
+    style="position:fixed;width:1px;height:1px;border:0;opacity:0;pointer-events:none;left:-9999px"></iframe>
 
   <!-- ===== MODAL: COMPROMISSOS DO DIA ===== -->
   <div class="modal-overlay" id="modalDia">
@@ -4269,11 +4274,18 @@
       };
       try {
         if (editId) {
-          // Administrador editando: registra no histórico se o status mudou
+          // Registra no histórico todas as modificações feitas (campos + status)
           const orig = DB.getAllDemandas().find(x => x.id === editId);
-          if (orig && orig.status !== data.status) {
-            const sel = document.getElementById('demandaStatus');
-            data.historico = [{ data: new Date().toLocaleString('pt-BR'), texto: `Status alterado para "${sel.options[sel.selectedIndex].text}"`, autor: currentUserName() }, ...(orig.historico || [])];
+          if (orig) {
+            const alteracoes = demandaDiff(orig, data);
+            if (alteracoes.length) {
+              const sel = document.getElementById('demandaStatus');
+              const labelStatus = sel.options[sel.selectedIndex].text;
+              const txt = alteracoes.includes('Status')
+                ? `Status alterado para "${labelStatus}"${alteracoes.length > 1 ? ' · ' + alteracoes.filter(a => a !== 'Status').join(' · ') : ''}`
+                : 'Demanda atualizada — ' + alteracoes.join(' · ');
+              data.historico = [{ data: new Date().toLocaleString('pt-BR'), texto: txt, autor: currentUserName() }, ...(orig.historico || [])];
+            }
           }
         }
         DB.saveDemanda(data);
@@ -4510,8 +4522,8 @@
       ${d.valor ? `<div><div class="form-label">Valor Estimado</div><div style="padding:8px 0;color:var(--success-light);font-weight:700">R$ ${Number(d.valor).toLocaleString('pt-BR', {minimumFractionDigits:2})}</div></div>` : ''}
     </div>
     ${d.obs ? `<div class="form-group mb4"><div class="form-label">Observações</div><div class="text-sm" style="padding:10px;background:var(--white-08);border-radius:8px;line-height:1.6;color:var(--white-70)">${d.obs}</div></div>` : ''}`;
-      // Tab historico
-      document.getElementById('tab-hist').innerHTML = `<div class="timeline">${(d.historico || []).map((h, i) => `<div class="timeline-item ${i === 0 ? 'active' : 'done'}"><div class="timeline-date">${h.data}</div><div class="timeline-text">${h.texto}</div><div class="timeline-author">por ${h.autor}</div></div>`).join('')}</div>`;
+      // Tab historico (eventos de alteração + comentários)
+      renderHistoricoDemanda(id);
       // Tab comentarios
       renderComentarios(id);
       // store current id
@@ -4540,10 +4552,108 @@
       d.comentarios = d.comentarios || [];
       const comentUser = currentUserName();
       d.comentarios.unshift({ autor: comentUser, data: new Date().toLocaleString('pt-BR'), texto: txt });
-      DB.saveRowDemanda(d);
-      document.getElementById('novoComentario').value = '';
-      renderComentarios(demandaId);
-      showToast('Comentário adicionado.');
+      try {
+        DB.saveRowDemanda(d);
+        // Atualiza o cache para que o comentário apareça imediatamente na tela
+        if (DB.cache && DB.cache[DB.KEY_DEMANDAS]) {
+          const idx = DB.cache[DB.KEY_DEMANDAS].findIndex(x => x.id === d.id);
+          if (idx >= 0) DB.cache[DB.KEY_DEMANDAS][idx] = d;
+        }
+        document.getElementById('novoComentario').value = '';
+        renderComentarios(demandaId);
+        renderHistoricoDemanda(demandaId);
+        showToast('Comentário adicionado.');
+      } catch (err) {
+        showToast('Erro ao salvar comentário: ' + (err?.message || err), true);
+      }
+    }
+
+    // Histórico unificado: eventos de alteração + comentários, do mais recente para o mais antigo
+    function demandaTimeline(d) {
+      const ev = [];
+      (d && d.historico ? d.historico : []).forEach(h => ev.push({ data: String(h.data || ''), autor: String(h.autor || ''), texto: String(h.texto || ''), tipo: 'Alteração' }));
+      (d && d.comentarios ? d.comentarios : []).forEach(c => ev.push({ data: String(c.data || ''), autor: String(c.autor || ''), texto: String(c.texto || ''), tipo: 'Comentário' }));
+      ev.sort((a, b) => {
+        const ta = DB.parseDataBR(a.data);
+        const tb = DB.parseDataBR(b.data);
+        return (tb ? tb.getTime() : 0) - (ta ? ta.getTime() : 0);
+      });
+      return ev;
+    }
+
+    function renderHistoricoDemanda(demandaId) {
+      const el = document.getElementById('tab-hist');
+      if (!el) return;
+      const d = DB.getAllDemandas().find(x => x.id === demandaId);
+      const ev = demandaTimeline(d);
+      if (!ev.length) { el.innerHTML = '<div class="text-xs text-muted">Nenhum registro no histórico.</div>'; return; }
+      el.innerHTML = `<div class="timeline">${ev.map((h, i) => `<div class="timeline-item ${i === 0 ? 'active' : 'done'}"><div class="timeline-date">${h.data} · ${h.tipo}</div><div class="timeline-text">${h.texto}</div><div class="timeline-author">por ${h.autor}</div></div>`).join('')}</div>`;
+    }
+
+    // Histórico imprimível da demanda (gera documento e envia para a impressora)
+    function imprimirHistorico() {
+      const demandaId = document.getElementById('novoComentario').dataset.demandaId;
+      const d = DB.getAllDemandas().find(x => x.id === demandaId);
+      if (!d) { showToast('Demanda não encontrada.', true); return; }
+      const frame = document.getElementById('dlsPrintFrame');
+      if (!frame) return;
+      const esc = (s) => String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const fmtBr = (v) => { if (!v) return '—'; const s = String(v).split('T')[0]; const p = s.split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(v); };
+      const timeline = demandaTimeline(d);
+      const linhas = timeline.map(e => `<tr><td class="c-dt">${esc(e.data)}</td><td class="c-tp">${esc(e.tipo)}</td><td class="c-au">${esc(e.autor)}</td><td class="c-tx">${esc(e.texto)}</td></tr>`).join('');
+      const cfg = (() => { try { return DB.get(DB.KEY_SETTINGS) || {}; } catch(e) { return {}; } })();
+      const empresa = cfg.nomeEmpresa || 'DLS — Assessoria e Consultoria';
+      const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Histórico ${esc(d.numero)}</title><style>
+        @page { size: A4; margin: 14mm; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #16233a; margin: 0; font-size: 11px; }
+        header { border-bottom: 2px solid #1565C0; padding-bottom: 8px; margin-bottom: 12px; }
+        header h1 { font-size: 15px; margin: 0 0 2px; color: #0A1628; }
+        header p { margin: 0; color: #555; font-size: 10px; }
+        h2 { font-size: 12px; margin: 14px 0 6px; color: #0A1628; text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+        table { width: 100%; border-collapse: collapse; }
+        table.dados td { border: 1px solid #c9d4e2; padding: 5px 7px; vertical-align: top; }
+        table.dados td.k { background: #eef3f9; font-weight: 700; width: 130px; color: #2b3d57; }
+        table.linha td { border: 1px solid #c9d4e2; padding: 5px 7px; vertical-align: top; }
+        table.linha th { background: #0A1628; color: #fff; border: 1px solid #0A1628; padding: 5px 7px; text-align: left; font-size: 10px; text-transform: uppercase; }
+        .c-dt { width: 105px; white-space: nowrap; }
+        .c-tp { width: 78px; }
+        .c-au { width: 130px; }
+        .c-tx { white-space: pre-wrap; }
+        footer { margin-top: 14px; border-top: 1px solid #ccc; padding-top: 6px; color: #666; font-size: 9px; display: flex; justify-content: space-between; }
+        .vazio { border: 1px solid #c9d4e2; padding: 12px; color: #777; font-style: italic; }
+      </style></head><body>
+        <header>
+          <h1>${esc(empresa)}</h1>
+          <p>Histórico completo da demanda ${esc(d.numero)} · impresso em ${esc(new Date().toLocaleString('pt-BR'))}</p>
+        </header>
+        <h2>Dados da demanda</h2>
+        <table class="dados">
+          <tr><td class="k">Número</td><td>${esc(d.numero)}</td><td class="k">Status</td><td>${esc(d.status)}</td></tr>
+          <tr><td class="k">Processo judicial</td><td>${esc(d.processo || '—')}</td><td class="k">Chamado</td><td>${esc(d.chamado || '—')}</td></tr>
+          <tr><td class="k">Reclamante</td><td>${esc(d.reclamante || '—')}</td><td class="k">Cliente</td><td>${esc(clienteNome(d.clienteId))}</td></tr>
+          <tr><td class="k">Procurador responsável</td><td>${esc(d.procurador || '—')}</td><td class="k">Responsável</td><td>${esc(calcNome(d.responsavelId))}</td></tr>
+          <tr><td class="k">Tipo de cálculo</td><td>${esc(d.tipo)}</td><td class="k">Origem do cálculo</td><td>${esc(d.origemCalculo || '—')}</td></tr>
+          <tr><td class="k">Data de requisição</td><td>${esc(fmtBr(d.dataRequisicao))}</td><td class="k">Prazo final</td><td>${esc(fmtBr(d.prazo))}</td></tr>
+          <tr><td class="k">Prioridade</td><td>${esc(d.prioridade)}</td><td class="k">Canal de entrada</td><td>${esc(d.origem || '—')}</td></tr>
+          <tr><td class="k">Criada em</td><td>${esc(d.criadoEm || '—')}</td><td class="k">Última atualização</td><td>${esc(d.updatedAt || '—')}</td></tr>
+          <tr><td class="k">Observações</td><td colspan="3">${esc(d.obs || '—')}</td></tr>
+        </table>
+        <h2>Histórico de modificações e comentários (${timeline.length})</h2>
+        ${timeline.length ? `<table class="linha"><thead><tr><th>Data / hora</th><th>Tipo</th><th>Responsável</th><th>Descrição</th></tr></thead><tbody>${linhas}</tbody></table>` : '<div class="vazio">Nenhum registro no histórico.</div>'}
+        <footer><span>${esc(empresa)} — documento gerado pelo sistema</span><span>Demanda ${esc(d.numero)}</span></footer>
+      </body></html>`;
+      try {
+        const doc = frame.contentWindow.document;
+        doc.open(); doc.write(html); doc.close();
+        setTimeout(() => {
+          try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+          catch (err) { showToast('Não foi possível acionar a impressão.', true); }
+        }, 350);
+      } catch (err) {
+        showToast('Não foi possível gerar o histórico para impressão.', true);
+      }
     }
 
     function salvarStatusDetalhe() {
@@ -4704,6 +4814,31 @@
         const colors = ['rgba(21,101,192,.7)', 'rgba(198,40,40,.6)', 'rgba(46,125,50,.6)', 'rgba(245,158,11,.6)', 'rgba(156,39,176,.6)', 'rgba(0,150,136,.6)'];
         window.chartCalcInstance = new Chart(ctx, { type: 'bar', data: { labels: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai'], datasets: calcs.slice(0, 5).map((c, i) => ({ label: c.nome.split(' ')[0], data: [10 + i + Math.floor(Math.random() * 5), 11 + i, 12 + i, 13 + i, (c.concluidas ?? 0)], backgroundColor: colors[i], borderRadius: 4 })) }, options: { ...chartBaseOpts, scales: { x: { ticks: { color: 'rgba(255,255,255,.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: 'rgba(255,255,255,.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.06)' } } } } });
       }
+    }
+
+    // Lista as alterações entre a versão original e a editada (para o histórico)
+    function demandaDiff(orig, novo) {
+      const itens = [];
+      const cmp = (campo, rotulo, formatar) => {
+        const a = formatar ? formatar(orig[campo]) : String(orig[campo] === null || orig[campo] === undefined ? '' : orig[campo]).trim();
+        const b = formatar ? formatar(novo[campo]) : String(novo[campo] === null || novo[campo] === undefined ? '' : novo[campo]).trim();
+        if (a !== b) itens.push(`${rotulo}: "${a || '—'}" → "${b || '—'}"`);
+      };
+      cmp('processo', 'Processo');
+      cmp('reclamante', 'Reclamante');
+      cmp('clienteId', 'Cliente', v => (v ? clienteNome(v) : ''));
+      cmp('tipo', 'Tipo de cálculo');
+      cmp('origemCalculo', 'Origem do cálculo');
+      cmp('procurador', 'Procurador');
+      cmp('chamado', 'Chamado');
+      cmp('responsavelId', 'Responsável', v => (v ? calcNome(v) : ''));
+      cmp('prazo', 'Prazo');
+      cmp('dataRequisicao', 'Data de requisição');
+      cmp('prioridade', 'Prioridade');
+      cmp('status', 'Status');
+      cmp('origem', 'Canal de entrada');
+      cmp('obs', 'Observações');
+      return itens;
     }
 
     // ============================================================
