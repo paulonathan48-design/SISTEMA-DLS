@@ -247,44 +247,63 @@ continuam sendo a fonte dos indicadores de demanda.
 
 ### Auditoria somente leitura do banco de produção
 
-A leitura somente leitura mais recente, em 03/11/2026, foi feita pela API REST
+A leitura somente leitura mais recente, em 04/11/2026, foi feita pela API REST
 do projeto, sem nenhuma escrita. A linha de base encontrada foi:
 
-- 796 demandas; 749 com `reclamante` preenchido; 718 entregues, todas com
-  `concluida_em`; todas com `responsavel_id` válido em `dls_calculistas`
-  (nenhum responsável órfão);
-- 12 calculistas, 30 clientes e 14 perfis;
-- tabelas e colunas da v5 ainda ausentes.
+- 843 demandas; 792 com `reclamante` preenchido; 726 entregues, todas com
+  `concluida_em`; 117 não entregues, todas sem `concluida_em`; todas com
+  `responsavel_id` válido em `dls_calculistas` (nenhum responsável órfão);
+- 12 calculistas, 30 clientes, 14 perfis, 4 reuniões e 1.880 logs;
+- tabelas e colunas da v5 ainda ausentes; sequência `main = 1071`; maior ID
+  existente `DLS-1071`, com 843 IDs únicos.
 
-A auditoria anterior (30/10/2026) tinha 766 demandas, 720 reclamantes e 675
-entregues; o crescimento é esperado e os números abaixo são a referência atual
-para a conferência pós-migração.
+A auditoria anterior (03/11/2026) tinha 796 demandas, 749 com reclamante, 718
+entregues e `main = 1023`; o crescimento é esperado e os números acima são a
+referência atual para a conferência pós-migração. O backup completo de dados
+dessa leitura tem 1.187.431 bytes e SHA-256
+`385964cc73b78bf9143a79892a49c89dbc26e1134967df7edc7b68ee6de04b1a`.
 
 Créditos históricos antes da migração, agrupados por `responsavel_id` (a
 premissa de crédito legado descrita na seção 9):
 
 | Calculista | Créditos históricos (demandas entregues com data) |
 | --- | ---: |
-| Arthur (`CALC-119`) | 202 |
-| Vinícius (`CALC-167`) | 123 |
+| Arthur (`CALC-119`) | 206 |
+| Vinícius (`CALC-167`) | 125 |
 | Jonathan (`CALC-164`) | 116 |
 | Enzo Massarioli (`CALC-168`) | 96 |
-| Heitor Carvalho (`CALC-165`) | 59 |
+| Heitor Carvalho (`CALC-165`) | 60 |
 | Paulo Nathan Dos Santos Silva (`CALC-116`) | 57 |
 | Lavínya Lopes (`CALC-166`) | 40 |
-| Paola Cristina Dos Santos Silva (`CALC-708`) | 17 |
+| Paola Cristina Dos Santos Silva (`CALC-708`) | 18 |
 | Bruno Lucas (`CALC-564`) | 6 |
 | Davi Spinetti (`CALC-169`) | 2 |
 | Matheus (`CALC-170`) | 0 |
 | Isabela Leite (`CALC-171`) | 0 |
-| **Total** | **718** |
+| **Total** | **726** |
 
-A soma por calculista (718) é igual ao total de demandas entregues com data,
+A soma por calculista (726) é igual ao total de demandas entregues com data,
 portanto a premissa não infla nem reduz o total. Esses são os valores de
 referência para a conferência pós-migração; a contagem "depois" deve ser feita
-pela view, usando `concluido_por_calculista_id` e `concluido_em`. As 47 demandas
+pela view, usando `concluido_por_calculista_id` e `concluido_em`. As 51 demandas
 sem `reclamante` gerarão cálculo legado marcado com `legado_sem_reclamante`;
 isso é esperado e não cria pessoa fictícia.
+
+### Ensaio de migração com a carga atual
+
+Em 04/11/2026, o backup acima foi importado em um banco PostgreSQL 17.6 local
+com o schema base, a migração v4 e as colunas legadas de produção, mas **sem a
+v5**. Em seguida foram aplicados `dls_calculistas_metricas.sql` e
+`dls_migration_v5_demandas_coletivas.sql` duas vezes. O ensaio produziu:
+
+- 843 demandas, 792 reclamantes, 843 cálculos e 843 vínculos de equipe;
+- 726 cálculos concluídos com crédito presumido e `excecoes_legado: []`;
+- nenhuma demanda sem principal ou com mais de um principal;
+- `main = 1071` preservado; primeira nova demanda retornaria `DLS-1072`
+  (`dls_next_demand_sequence(1071)` inseriu `demandas = 1072`; teste revertido);
+- segunda aplicação da v5 sem alterar contagens.
+
+Nenhuma escrita foi feita no Supabase nesse ensaio.
 
 A paginação da carga inicial também foi exercitada em leitura contra a API real
 (páginas de 500): 796 linhas retornadas e 796 IDs únicos, sem truncamento nem
