@@ -1388,6 +1388,92 @@ as $$
 $$;
 
 -- ------------------------------------------------------------
+-- 10.1 Sequência própria de demandas
+--
+-- A sequência 'main' é compartilhada com clientes/calculistas e pode estar
+-- defasada em relação aos IDs DLS-xxxx importados. Esta RPC usa o maior ID
+-- já existente como piso e incrementa de forma atômica, evitando colisões.
+-- ------------------------------------------------------------
+create or replace function public.dls_next_demand_sequence(
+  p_last_used integer default 100
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_next integer;
+  v_floor integer := greatest(coalesce(p_last_used, 100), 100);
+begin
+  -- O piso enviado pelo cliente pode estar defasado (cache antigo, aba aberta
+  -- antes de uma importação ou RLS mais restritiva). O próprio banco calcula
+  -- o maior DLS numérico para nunca reutilizar um ID existente.
+  select greatest(
+           v_floor,
+           coalesce(max((regexp_replace(id, '\D', '', 'g'))::int), 100)
+         )
+    into v_floor
+    from public.dls_demandas
+   where id ~ '^DLS-[0-9]+$';
+
+  insert into public.dls_sequences (name, current_value)
+  values ('demandas', v_floor)
+  on conflict (name) do update
+    set current_value = greatest(public.dls_sequences.current_value, excluded.current_value),
+        updated_at = now();
+
+  update public.dls_sequences
+     set current_value = current_value + 1,
+         updated_at = now()
+   where name = 'demandas'
+  returning current_value into v_next;
+
+  return v_next;
+end;
+$$;
+
+comment on function public.dls_next_demand_sequence(integer)
+  is 'Gera o próximo número DLS-xxxx usando o maior ID conhecido como piso atômico.';
+
+-- A função original de sequência só usava o valor default na criação da linha.
+-- Se a linha já existisse defasada (por exemplo, main=100 com IDs CALC-708),
+-- o próximo ID poderia colidir. A versão abaixo eleva a sequência ao piso
+-- informado pelo cliente antes de incrementar, preservando o comportamento
+-- anterior quando o valor atual já é maior.
+create or replace function public.dls_next_sequence(
+  sequence_name text default 'main',
+  default_value integer default 100
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  next_value integer;
+  floor_value integer := greatest(coalesce(default_value, 100), 100);
+begin
+  insert into public.dls_sequences (name, current_value)
+  values (sequence_name, floor_value)
+  on conflict (name) do update
+    set current_value = greatest(public.dls_sequences.current_value, excluded.current_value),
+        updated_at = now();
+
+  update public.dls_sequences
+     set current_value = current_value + 1,
+         updated_at = now()
+   where name = sequence_name
+  returning current_value into next_value;
+
+  return next_value;
+end;
+$$;
+
+comment on function public.dls_next_sequence(text, integer)
+  is 'Sequência genérica com piso atômico para não reutilizar IDs antigos.';
+
+-- ------------------------------------------------------------
 -- 11. RLS e permissões
 --
 -- LIMITAÇÃO CONHECIDA: o DLS autentica usuários no navegador com a anon key
@@ -1426,6 +1512,8 @@ grant execute on function public.dls_reabrir_calculo(text, text, text) to anon, 
 grant execute on function public.dls_corrigir_credito_calculo(text, text, text, text) to anon, authenticated;
 grant execute on function public.dls_excluir_demanda_completa(text) to anon, authenticated;
 grant execute on function public.dls_relatorio_migracao_v5() to anon, authenticated;
+grant execute on function public.dls_next_demand_sequence(integer) to anon, authenticated;
+grant execute on function public.dls_next_sequence(text, integer) to anon, authenticated;
 
 commit;
 

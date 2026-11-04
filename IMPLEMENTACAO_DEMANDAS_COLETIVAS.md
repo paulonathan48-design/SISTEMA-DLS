@@ -1,8 +1,9 @@
 # Implementação — Demandas Coletivas v5
 
-**Status:** implementação de código concluída e validada estaticamente e em
-PostgreSQL embarcado; **não aplicada em produção**. Nenhuma escrita foi feita no
-Supabase de produção e nenhum teste E2E foi executado contra as tabelas v5 reais.
+**Status:** implementação de código concluída e validada estaticamente, em
+PostgreSQL embarcado e em PostgreSQL 17.6 com PostgREST 16.5 local; **não
+aplicada em produção nem em staging Supabase**. Nenhuma escrita foi feita no
+Supabase de produção.
 
 Referência: `C:\Users\paulo\Downloads\DLS_Especificacao_Demandas_Coletivas_v2.md`.
 
@@ -49,9 +50,10 @@ limitação está detalhada na seção 9.
 | `index.html` | UI de reclamantes/equipe/cálculos, filtros, detalhe, relatórios, ações de conclusão/reabertura/correção, importação/exportação, exclusão transacional, cache e compatibilidade legada. |
 | `README.md` | Instalação, ordem de migração, validação, limitações de segurança, testes, reset e rollback. |
 
-O módulo JS, o SQL, os testes e este relatório são novos e permanecem não
-versionados no Git (working tree), conforme o estado entregue; `README.md` e
-`index.html` estão modificados.
+O módulo JS, o SQL, os testes e este relatório fazem parte do histórico
+versionado da implementação; a correção de sequência foi adicionada após a
+validação em PostgREST e está coberta pelos testes. `README.md` e `index.html`
+foram atualizados no mesmo conjunto.
 
 ## 3. Modelo de dados
 
@@ -128,6 +130,10 @@ continuam sendo a fonte dos indicadores de demanda.
 - `public.dls_excluir_demanda_completa(p_demanda_id)`: exclusão transacional com
   lock; remove cálculos, reclamantes, equipe e demanda na ordem correta.
 - `public.dls_relatorio_migracao_v5()`: contagens e exceções do backfill.
+- `public.dls_next_demand_sequence(p_last_used)`: gera o próximo `DLS-*` com o
+  maior ID conhecido como piso atômico.
+- `public.dls_next_sequence(sequence_name, default_value)`: versão reforçada da
+  sequência genérica; eleva a linha existente ao piso antes de incrementar.
 - `public.dls_set_updated_at()` e `public.dls_validar_calculo()`: timestamps e
   invariantes de cálculo.
 - `public.dls_sincronizar_responsavel_principal()`: mantém o principal em
@@ -233,8 +239,8 @@ continuam sendo a fonte dos indicadores de demanda.
   exists` quando aplicável.
 - O backfill é condicional e determinístico; rodar novamente não duplica filhos.
 - O relatório `dls_relatorio_migracao_v5()` permite conferência após a execução.
-- A migração foi aplicada **duas vezes** no PostgreSQL embarcado de validação sem
-  erro.
+- A migração foi aplicada **duas vezes** no PostgreSQL embarcado e **duas vezes**
+  no PostgreSQL 17.6 real de validação, sem erro e sem alterar contagens.
 - A migração **não foi aplicada** no Supabase de produção nem em staging real.
 
 ## 7. Testes executados
@@ -291,10 +297,12 @@ node --check dls_demandas_coletivas.js
 → sem erros
 
 node --test tests/domain.test.js tests/sql.test.js tests/client.test.js
-→ 41 testes, 41 pass, 0 fail
+→ 44 testes, 44 pass, 0 fail
 
-Extração do JavaScript inline de index.html + ESLint (configuração temporária)
-→ 1 script extraído, nenhum erro
+Extração do JavaScript inline de index.html + `new Function` (sintaxe)
+→ 1 script extraído, sem erro
+ESLint temporário da revisão inicial
+→ sem erros antes da correção de sequência
 ```
 
 Os testes cobrem, entre outros:
@@ -316,7 +324,9 @@ Os testes cobrem, entre outros:
 - declaração do domínio antes do primeiro uso na exportação XLSX (regressão de TDZ);
 - paginação da carga inicial para não truncar filhos no limite do PostgREST;
 - compatibilidade entre cabeçalho e colunas do relatório de cálculos;
-- exclusão transacional e `RESTRICT` de reclamante.
+- exclusão transacional e `RESTRICT` de reclamante;
+- sequência própria de demandas, sequências separadas de calculistas/clientes e
+  piso atômico contra IDs legados defasados.
 
 ### Validação real de SQL em PostgreSQL embarcado
 
@@ -343,6 +353,57 @@ Resultado final: `PGLITE-OK`, todas as asserções do cenário verdadeiras.
 Isso valida sintaxe, transações, triggers, constraints e RPCs em um PostgreSQL
 real, mas **não** substitui testes no Supabase (extensões, RLS, PostgREST,
 volume e concorrência reais).
+
+### Validação em PostgreSQL 17 + PostgREST 16.5 local
+
+Em 03/11/2026 foi montado um ambiente local isolado com PostgreSQL 17.6 e
+PostgREST 16.5, sem Docker e sem tocar no serviço PostgreSQL existente. Foram
+criados cluster, banco, roles, grants e as políticas RLS do schema base; os 796
+registros de produção foram lidos somente para leitura pela API e carregados no
+banco local. Em seguida foram aplicados `dls_calculistas_metricas.sql` e
+`dls_migration_v5_demandas_coletivas.sql` **duas vezes**.
+
+Resultados:
+
+| Conferência | Resultado |
+| --- | ---: |
+| Demandas / reclamantes / cálculos / equipe | 796 / 749 / 796 / 796 |
+| Créditos concluídos | 718, distribuição por calculista idêntica à linha de base |
+| `dls_relatorio_migracao_v5()` | `excecoes_legado: []`, zero principal duplicado |
+| Segunda aplicação da v5 | contagens inalteradas |
+| Carga do app via PostgREST real | 796 demandas carregadas, sem erro de CORS/PostgREST |
+| Nova demanda coletiva | `DLS-2026-1024`, dois reclamantes, dois cálculos e dois integrantes |
+| Concluir / reabrir / reconcluir | crédito e data congelados; reabertura limpou; reconclusão creditou de novo |
+| Remover calculista creditado da equipe | crédito histórico preservado |
+| Cálculo aberto com executor fora da equipe | bloqueado pela RPC com HTTP 400 |
+| Piso atômico com sequência defasada | sequência em 100 e RPC chamada com 100 retornou `DLS-1024` (maior real 1023) |
+| XLSX | 10 abas, incluindo Demandas, Reclamantes, Equipe e Cálculos |
+| Backup exportado | 797 demandas, 751 reclamantes, 798 cálculos e 798 vínculos no cenário com teste |
+| Exclusão transacional | voltou a 796/749/796/796 e 718 créditos |
+
+O teste encontrou um problema no schema local que reproduzia a carga de
+produção: a sequência `main` estava em **100**, embora os dados importados já
+possuíssem `DLS-1023`, `CALC-708` e `CLI-1005`. Novos cadastros poderiam receber
+IDs antigos (`DLS-101`, `CALC-101`, `CLI-101`). Na auditoria de 03/11/2026 a
+produção tinha somente `main = 1023`, sem as linhas `demandas`, `calculistas` ou
+`clientes`); as RPCs da v5 criam essas linhas no primeiro uso. A correção:
+
+- `DB.proximaIdentidadeDemanda()` usa `dls_next_demand_sequence`, com o maior ID
+  `DLS-*` como piso; a RPC recalcula esse máximo no banco, além do valor enviado
+  pelo cliente;
+- calculistas e clientes usam sequências separadas (`calculistas`, `clientes`) e
+  o maior ID numérico de cada catálogo como piso;
+- a v5 redefine `dls_next_sequence` para elevar uma linha existente ao piso antes
+  de incrementar;
+- a v5 cria as linhas `demandas`, `calculistas` e `clientes` no primeiro uso, com
+  piso no maior ID do respectivo catálogo;
+- a criação local passou a gerar `DLS-1024`, e os testes de regressão verificam
+  esse comportamento.
+
+Esse ambiente usa as políticas RLS permissivas do schema base (anon), não
+Supabase Auth/RLS por identidade; não mede concorrência nem substitui staging.
+A importação completa do backup não foi repetida nele; a exportação e a exclusão
+foram validadas.
 
 ### Migração com a carga real de produção (somente leitura)
 
@@ -403,24 +464,26 @@ O teste encontrou um defeito real de runtime: `exportarRelatorio()` usava
 para o início da função e foi adicionado um teste de regressão em
 `tests/client.test.js`.
 
-Limitações desse harness: ele não usa o PostgREST/RLS reais, não mede
+Limitações desse harness PGlite: ele não usa PostgREST/RLS reais, não mede
 concorrência, não cobre acessibilidade/responsividade e a importação do backup
 completo (797 demandas via RPCs sequenciais) levou mais de 30 segundos no
-navegador local. O teste E2E em staging com Supabase real continua pendente.
+navegador local. O harness PostgreSQL 17 + PostgREST 16.5 usa uma API real, mas
+ainda não o Supabase/RLS por identidade. O E2E em staging com Supabase real
+continua pendente.
 
 ## 8. O que não foi executado
 
 - Aplicação da migração no Supabase de produção ou staging.
-- Testes E2E contra o Supabase real/staging; o fluxo funcional foi exercitado
-  apenas no harness local com PGlite e fachada REST, sem RLS/PostgREST reais,
-  acessibilidade ou responsividade.
+- Testes E2E contra o Supabase real/staging; o fluxo funcional foi exercitado em
+  PostgreSQL 17.6 + PostgREST 16.5 locais, com RLS permissiva do schema base,
+  sem Supabase Auth/identidade, acessibilidade ou responsividade.
 - Testes de concorrência com múltiplos navegadores/usuários reais.
-- Testes de volume no Supabase real; a carga de 796 demandas foi exercitada
-  apenas no PGlite local, não no PostgREST/RLS de produção.
+- Testes de volume no Supabase real; a carga de 796 demandas foi exercitada no
+  PGlite e no PostgREST local, não no Supabase de produção.
 - Validação de RLS/permissões por usuário no banco (a arquitetura atual não
   fornece identidade de servidor).
-- Execução dos harnesses PGlite dentro do CI do repositório; eles foram
-  validações locais temporárias, não testes versionados.
+- Execução dos harnesses locais (PGlite e PostgREST) dentro do CI do repositório;
+  eles foram validações temporárias, não testes versionados.
 
 Não há resultados de execução da migração em produção a apresentar. Nenhuma
 operação de escrita foi realizada no banco de produção; a auditoria da seção 7
@@ -460,10 +523,11 @@ cálculos e créditos; o fluxo de restauração é backup/importação.
 
 ### Cobertura E2E
 
-O fluxo funcional foi exercitado no harness local descrito na seção 7, mas ainda
-não no Supabase real. A importação completa de backup executa uma RPC por
-demanda; com 797 demandas ela levou mais de 30 segundos no harness e precisa ser
-medida em homologação antes de ser usada como rotina operacional.
+O fluxo funcional foi exercitado nos harnesses locais descritos na seção 7,
+incluindo PostgREST real, mas ainda não no Supabase real/staging. A importação
+completa de backup executa uma RPC por demanda; com 797 demandas ela levou mais
+de 30 segundos no harness PGlite e precisa ser medida em homologação antes de ser
+usada como rotina operacional.
 
 ## 10. Rollout
 
@@ -472,7 +536,9 @@ medida em homologação antes de ser usada como rotina operacional.
 3. Aplicar `dls_migration_v5_demandas_coletivas.sql` em homologação e recarregar
    o schema da API se as RPCs novas não aparecerem no PostgREST.
 4. Rodar `select public.dls_relatorio_migracao_v5();`.
-5. Conferir principal único, filhos sem principal, cálculos legados e view.
+5. Conferir principal único, filhos sem principal, cálculos legados, view e
+   sequências (`demandas` deve estar no maior ID; o próximo cadastro deve ser
+   maior+1, não um ID legado).
 6. Publicar frontend e limpar cache.
 7. Homologar criação/edição/conclusão/reabertura/relatórios/exportação/backup.
 8. Repetir em produção com backup, janela e autorização.
@@ -480,7 +546,8 @@ medida em homologação antes de ser usada como rotina operacional.
 
 ## 11. Validação mínima em homologação
 
-- Criar demanda coletiva com 1 principal + 2 co-responsáveis e 2 reclamantes.
+- Criar demanda coletiva com 1 principal + 2 co-responsáveis e 2 reclamantes;
+  conferir que o ID é o maior existente + 1.
 - Criar 2 cálculos com executores distintos; concluir cada um confirmando o
   crédito.
 - Reabrir um cálculo; conferir crédito/data limpos e histórico.
