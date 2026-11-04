@@ -243,6 +243,13 @@ auditoria de 03/11/2026 a produção tinha somente `main = 1023` (sem as linhas
 harnesses não substituem a validação em Supabase (RLS por identidade,
 concorrência e volume de produção).
 
+Na mesma sessão local foram executadas 20 chamadas concorrentes à RPC de
+sequência (20 IDs únicos, 1024–1043), a regravação dos 796 agregados pela RPC
+(42,4 s, zero falhas, contagens e créditos idênticos) e exportações CSV reais.
+O backup exportado passou em `validateBackupPayload` e os 796 agregados passaram
+na normalização/validação; o fluxo completo de `FileReader`/importação no
+navegador não foi reexecutado contra o PostgREST real.
+
 ## Segurança e limitações conhecidas
 
 - **A autenticação atual é client-side.** O DLS usa a chave anon pública do

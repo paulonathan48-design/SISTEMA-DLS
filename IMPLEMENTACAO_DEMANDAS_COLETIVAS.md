@@ -386,7 +386,7 @@ produção: a sequência `main` estava em **100**, embora os dados importados j�
 possuíssem `DLS-1023`, `CALC-708` e `CLI-1005`. Novos cadastros poderiam receber
 IDs antigos (`DLS-101`, `CALC-101`, `CLI-101`). Na auditoria de 03/11/2026 a
 produção tinha somente `main = 1023`, sem as linhas `demandas`, `calculistas` ou
-`clientes`); as RPCs da v5 criam essas linhas no primeiro uso. A correção:
+`clientes`; as RPCs da v5 criam essas linhas no primeiro uso. A correção:
 
 - `DB.proximaIdentidadeDemanda()` usa `dls_next_demand_sequence`, com o maior ID
   `DLS-*` como piso; a RPC recalcula esse máximo no banco, além do valor enviado
@@ -401,9 +401,36 @@ produção tinha somente `main = 1023`, sem as linhas `demandas`, `calculistas` 
   esse comportamento.
 
 Esse ambiente usa as políticas RLS permissivas do schema base (anon), não
-Supabase Auth/RLS por identidade; não mede concorrência nem substitui staging.
-A importação completa do backup não foi repetida nele; a exportação e a exclusão
-foram validadas.
+Supabase Auth/RLS por identidade e não substitui staging. A seguir foram
+executadas validações adicionais de concorrência, reidratação e exportação real.
+
+### Concorrência, reidratação e exportações reais
+
+- **Concorrência da sequência:** 20 chamadas paralelas a
+  `dls_next_demand_sequence(1023)` retornaram 20 IDs únicos, de 1024 a 1043, sem
+  erro HTTP. A sequência local foi restaurada para 1023 após o teste.
+- **Reidratação completa:** os 796 agregados carregados foram regravados pela
+  própria RPC `dls_salvar_demanda_coletiva`, com `incluirConclusao: true`, em
+  **42,4 segundos**, sem falhas.
+- **Preservação de dados:** após a reidratação, as contagens continuaram
+  796/749/796/796, os 718 créditos mantiveram a mesma distribuição e o relatório
+  retornou `excecoes_legado: []`. Hashes de todas as linhas de demandas,
+  reclamantes, cálculos e equipe, excluindo apenas `updated_at`/`touched_at`,
+  ficaram idênticos aos de um dump anterior ao teste; catálogos também ficaram
+  idênticos.
+- **Backup real:** o backup exportado pelo app (796 demandas, 749 reclamantes,
+  796 cálculos, 796 vínculos, 12 calculistas e 30 clientes) passou em
+  `validateBackupPayload`; os 796 agregados passaram em
+  `normalizeDemandAggregate` + `validateDemandAggregate`.
+- **CSV real:** exportações de demandas (796 linhas + cabeçalho), relatório
+  legado (12 calculistas) e produção de cálculos (796 cálculos) foram geradas
+  pelo app sem erro.
+- **Reset:** continuou bloqueado pela presença da v5.
+
+O fluxo completo de `FileReader`/`importarBackup` no navegador não foi reexecutado
+contra o PostgREST real; o parser e a normalização foram validados sobre o backup
+real, e a gravação de todos os agregados foi testada pela RPC. A importação
+integral em PGlite já havia sido exercitada.
 
 ### Migração com a carga real de produção (somente leitura)
 
