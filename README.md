@@ -1,4 +1,4 @@
-﻿# SISTEMA-DLS
+# SISTEMA-DLS
 
 Aplicação web estática de gestão de demandas jurídicas, hospedada no Vercel e
 persistida no Supabase via API REST. A interface principal está em `index.html`
@@ -7,24 +7,6 @@ persistida no Supabase via API REST. A interface principal está em `index.html`
 Este repositório contém a implementação da **migração v5 — demandas coletivas,
 múltiplos reclamantes, equipe de responsáveis e produtividade por cálculo**,
 conforme a especificação `DLS_Especificacao_Demandas_Coletivas_v2.md`.
-
-## Status de produção (04/11/2026)
-
-- Migração v5 aplicada no Supabase de produção, schema cache do PostgREST
-  recarregado e v5 reaplicada após o deploy para cobrir a janela de transição.
-- Frontend novo publicado na Vercel em `https://sistema-dls.vercel.app`, deploy
-  do commit `e8750f1`.
-- Linha de base após a migração: **871 demandas, 812 reclamantes, 871 cálculos,
-  871 vínculos de equipe e 752 créditos concluídos**; 12 calculistas, 30 clientes
-  e 1.949 logs. Ainda não havia demanda coletiva cadastrada nesse instante.
-- `dls_relatorio_migracao_v5()`: `excecoes_legado: []`, nenhum principal
-  duplicado ou ausente; `main = 1102`, maior ID `DLS-1102`, próximo ID `DLS-1103`.
-- Backup pós-migração validado por `validateBackupPayload`: 4.111.209 bytes,
-  SHA-256 `324740f21ce5c28fc6df481a783c18a29ba1dfbdbe1ee383e6e566a482bef587`,
-  em `C:\Users\paulo\Downloads\DLS-backups\`.
-- Snapshot pré-migração preservado no próprio banco no schema
-  `dls_backup_v5_20261104` (871 demandas), além do backup anterior de 843
-  demandas.
 
 ## Arquivos principais
 
@@ -97,9 +79,8 @@ conforme a especificação `DLS_Especificacao_Demandas_Coletivas_v2.md`.
 
 ## Ordem de implantação
 
-> O rollout de produção foi concluído em 04/11/2026. As instruções abaixo servem
-> para uma nova instalação ou para reaplicação; a v5 é transacional
-> (`begin`/`commit`) e idempotente. Não a execute em outro ambiente sem backup,
+> A migração v5 é transacional (`begin`/`commit`) e idempotente, mas deve ser
+> executada primeiro em homologação. Não a execute em produção sem backup,
 > janela de manutenção e autorização expressa.
 
 1. **Backup completo** do banco pelo painel do Supabase (schema + dados). Guarde
@@ -151,8 +132,8 @@ select count(*) as calculos_legados
   from public.dls_demanda_calculos
  where legado_principal;
 
--- Créditos históricos por calculista. Na linha de base de 04/11/2026 a soma
--- é 752 (ver IMPLEMENTACAO_DEMANDAS_COLETIVAS.md, seção 7).
+-- Créditos históricos por calculista. Na linha de base de 03/11/2026 a soma
+-- deve ser 718 (ver IMPLEMENTACAO_DEMANDAS_COLETIVAS.md, seção 7).
 select concluido_por_calculista_id, count(*) as creditos
   from public.dls_demanda_calculos
  where status = 'entregue' and concluido_em is not null
@@ -167,10 +148,10 @@ select name, current_value
  where name in ('main', 'demandas', 'clientes', 'calculistas')
  order by name;
 
-select max((regexp_replace(id, '[^0-9]', '', 'g'))::int) as maior_id_demanda
+select max((regexp_replace(id, '\D', '', 'g'))::int) as maior_id_demanda
   from public.dls_demandas;
--- O primeiro cadastro novo deve receber DLS-(maior_id_demanda + 1). Com a
--- linha de base de 04/11/2026, o próximo ID é DLS-1103.
+-- O primeiro cadastro novo deve receber DLS-(maior_id_demanda + 1), por exemplo
+-- DLS-1024 com a linha de base de 796 demandas em 03/11/2026.
 
 -- Não deve haver demanda com mais de um principal ativo.
 select demanda_id, count(*)
@@ -259,8 +240,8 @@ embora os IDs importados chegassem a `DLS-1023`, `CALC-708` e `CLI-1005`; a
 numeração foi corrigida para sequências separadas com piso atômico. Na
 auditoria de 03/11/2026 a produção tinha somente `main = 1023` (sem as linhas
 `demandas`, `calculistas` ou `clientes`), que a v5 cria no primeiro uso. Esses
-harnesses foram seguidos pelo rollout real no Supabase; a validação de RLS por
-identidade continua pendente porque a autenticação é client-side.
+harnesses não substituem a validação em Supabase (RLS por identidade e volume
+de produção).
 
 Na mesma sessão local foram executadas 20 chamadas concorrentes à RPC de
 sequência (20 IDs únicos, 1024–1043), a regravação dos 796 agregados pela RPC
@@ -280,26 +261,6 @@ a v5 duas vezes. Resultado: 843/792/843/843, 726 créditos, zero exceções,
 `main = 1071` e primeira nova demanda `DLS-1072`. Nenhuma escrita foi feita no
 Supabase durante o ensaio.
 
-### Rollout e E2E de produção (04/11/2026)
-
-Antes da escrita foi criado um snapshot consistente no schema
-`dls_backup_v5_20261104` e aplicado `dls_calculistas_metricas.sql`; a v5 foi
-executada em cerca de 2 s, o schema cache foi recarregado e o deploy do frontend foi
-publicado. Uma segunda execução da v5, após o deploy, cobriu a janela de
-transição sem alterar as contagens.
-
-O teste transacional real, terminando em `rollback`, exercitou a sequência
-(`DLS-1103`), uma demanda coletiva com 2 reclamantes/2 cálculos, principal
-único, conclusão idempotente, correção de crédito, preservação do crédito em
-re-save, reabertura e exclusão. O teste pela API REST pública criou, leu,
-concluiu, reabriu e excluiu outra demanda de teste; todos os filhos remanescentes
-foram conferidos como zero. Nenhum resíduo de teste ficou em produção.
-
-O backup pós-migração tem 871 demandas, 812 reclamantes, 871 cálculos, 871
-vínculos e 752 créditos; a validação do payload retornou `valid: true` e zero
-erros, sem principal ausente/duplicado. O arquivo e o SHA-256 estão na seção
-“Status de produção”.
-
 ## Segurança e limitações conhecidas
 
 - **A autenticação atual é client-side.** O DLS usa a chave anon pública do
@@ -316,9 +277,8 @@ erros, sem principal ausente/duplicado. O arquivo e o SHA-256 estão na seção
 - As RPCs são `SECURITY INVOKER`; os grants para `anon`/`authenticated` são
   intencionais para manter o funcionamento atual. Não trate a anon key como
   segredo.
-- A migração é aditiva e já foi ensaiada e aplicada em produção. Para novas
-  alterações, mantenha o ensaio em cópia de homologação e o backup validado;
-  não há rollback automático de dados.
+- A migração é aditiva, mas ainda assim deve ser executada em cópia de
+  homologação primeiro. Não há rollback automático de dados.
 - A view e o frontend usam o fuso `America/Sao_Paulo` para agrupar a data de
   conclusão dos cálculos.
 - Não foi adicionada uma feature flag de runtime. O desligamento operacional de
@@ -342,16 +302,12 @@ cálculo é protegida por FK `ON DELETE RESTRICT`.
 
 - **Falha durante a migração:** como todo o script está em uma única transação,
   não deve haver aplicação parcial. Corrija o erro e reexecute.
-- **Rollback apenas do frontend:** restaure a versão anterior de `index.html`
-  (antes do commit `e8750f1`). A versão antiga ignora as novas colunas e tabelas;
-  os dados v5 permanecem no banco para uma nova tentativa. Demandas cadastradas
-  pelo frontend antigo nesse intervalo não terão filhos v5; reexecute o backfill
-  antes de voltar ao frontend novo.
-- **Rollback completo do banco:** restaure o snapshot anterior à migração. Em
-  produção, o snapshot em banco está no schema `dls_backup_v5_20261104`; o backup
-  externo validado está em `C:\Users\paulo\Downloads\DLS-backups\`. Não remova
-  tabelas ou colunas manualmente sem backup e autorização, pois cálculos, créditos
-  e histórico podem ser perdidos.
+- **Rollback apenas do frontend:** restaure a versão anterior de `index.html`.
+  A versão antiga ignora as novas colunas e tabelas; os dados v5 permanecem no
+  banco para uma nova tentativa.
+- **Rollback completo do banco:** restaure o snapshot anterior à migração. Não
+  remova tabelas ou colunas manualmente em produção sem backup e autorização,
+  pois cálculos, créditos e histórico podem ser perdidos.
 - **Incidente pós-implantação:** bloqueie novas escritas na aplicação, exporte o
   estado atual para análise, restaure o snapshot e reaplique a migração corrigida
   em homologação antes de nova promoção.

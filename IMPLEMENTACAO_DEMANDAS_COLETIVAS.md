@@ -1,11 +1,9 @@
-﻿# Implementação — Demandas Coletivas v5
+# Implementação — Demandas Coletivas v5
 
-**Status:** implementação concluída e **em produção desde 04/11/2026**. A v5 foi
-aplicada no Supabase `mttqsfawxnrotabjfiym`, o schema do PostgREST foi
-recarregado, o frontend foi publicado na Vercel (commit `e8750f1`) e o backfill
-foi reexecutado após o deploy. Não há staging Supabase separado; o ensaio foi
-feito em PostgreSQL 17.6 local com os dados reais e a validação final foi
-executada no próprio Supabase de produção.
+**Status:** implementação de código concluída e validada estaticamente, em
+PostgreSQL embarcado e em PostgreSQL 17.6 com PostgREST 16.5 local; **não
+aplicada em produção nem em staging Supabase**. Nenhuma escrita foi feita no
+Supabase de produção.
 
 Referência: `C:\Users\paulo\Downloads\DLS_Especificacao_Demandas_Coletivas_v2.md`.
 
@@ -243,9 +241,7 @@ continuam sendo a fonte dos indicadores de demanda.
 - O relatório `dls_relatorio_migracao_v5()` permite conferência após a execução.
 - A migração foi aplicada **duas vezes** no PostgreSQL embarcado e **duas vezes**
   no PostgreSQL 17.6 real de validação, sem erro e sem alterar contagens.
-- No Supabase de produção, a v5 foi aplicada em 04/11/2026 e reaplicada após o
-  deploy (cerca de 2 s por execução), sem erro e sem alterar as contagens. O schema
-  cache do PostgREST foi recarregado com `notify pgrst, 'reload schema'`.
+- A migração **não foi aplicada** no Supabase de produção nem em staging real.
 
 ## 7. Testes executados
 
@@ -262,27 +258,10 @@ do projeto, sem nenhuma escrita. A linha de base encontrada foi:
   existente `DLS-1071`, com 843 IDs únicos.
 
 A auditoria anterior (03/11/2026) tinha 796 demandas, 749 com reclamante, 718
-entregues e `main = 1023`; o crescimento é esperado. O backup completo de dados
-dessa leitura pré-migração tem 1.187.431 bytes e SHA-256
+entregues e `main = 1023`; o crescimento é esperado e os números acima são a
+referência atual para a conferência pós-migração. O backup completo de dados
+dessa leitura tem 1.187.431 bytes e SHA-256
 `385964cc73b78bf9143a79892a49c89dbc26e1134967df7edc7b68ee6de04b1a`.
-
-### Linha de base final de produção
-
-Após a migração e o deploy, a leitura de 04/11/2026 encontrou:
-
-- **871 demandas, 812 reclamantes, 871 cálculos e 871 vínculos de equipe**;
-- **752 cálculos concluídos com crédito e data**, 12 calculistas, 30 clientes,
-  1.949 logs e 5 reuniões; ainda **0 demandas coletivas** cadastradas;
-- `dls_relatorio_migracao_v5()` com `excecoes_legado: []`, zero principal
-  duplicado/ausente e zero cálculo ativo sem principal;
-- `main = 1102`, maior ID `DLS-1102`; o próximo ID é **DLS-1103**;
-- nenhuma linha de teste residual (`DLS-E2E-*` ou `DLS-1103`).
-
-O backup pós-migração tem 4.111.209 bytes e SHA-256
-`324740f21ce5c28fc6df481a783c18a29ba1dfbdbe1ee383e6e566a482bef587`; passou em
-`validateBackupPayload` com zero erros. O snapshot pré-migração está no schema
-`dls_backup_v5_20261104` do próprio banco e o backup externo está em
-`C:\Users\paulo\Downloads\DLS-backups\`.
 
 Créditos históricos antes da migração, agrupados por `responsavel_id` (a
 premissa de crédito legado descrita na seção 9):
@@ -307,26 +286,8 @@ A soma por calculista (726) é igual ao total de demandas entregues com data,
 portanto a premissa não infla nem reduz o total. Esses são os valores de
 referência para a conferência pós-migração; a contagem "depois" deve ser feita
 pela view, usando `concluido_por_calculista_id` e `concluido_em`. As 51 demandas
-sem `reclamante` daquela linha de base geraram cálculo legado marcado com
-`legado_sem_reclamante`; isso é esperado e não cria pessoa fictícia.
-
-Créditos apurados após a migração, por `concluido_por_calculista_id`:
-
-| Calculista | Créditos após a migração |
-| --- | ---: |
-| Arthur (`CALC-119`) | 211 |
-| Vinícius (`CALC-167`) | 126 |
-| Jonathan (`CALC-164`) | 121 |
-| Enzo Massarioli (`CALC-168`) | 97 |
-| Heitor Carvalho (`CALC-165`) | 66 |
-| Paulo Nathan Dos Santos Silva (`CALC-116`) | 58 |
-| Lavínya Lopes (`CALC-166`) | 46 |
-| Paola Cristina Dos Santos Silva (`CALC-708`) | 18 |
-| Bruno Lucas (`CALC-564`) | 7 |
-| Davi Spinetti (`CALC-169`) | 2 |
-| Matheus (`CALC-170`) | 0 |
-| Isabela Leite (`CALC-171`) | 0 |
-| **Total** | **752** |
+sem `reclamante` gerarão cálculo legado marcado com `legado_sem_reclamante`;
+isso é esperado e não cria pessoa fictícia.
 
 ### Ensaio de migração com a carga atual
 
@@ -347,33 +308,6 @@ Nenhuma escrita foi feita no Supabase nesse ensaio.
 A paginação da carga inicial também foi exercitada em leitura contra a API real
 (páginas de 500): 796 linhas retornadas e 796 IDs únicos, sem truncamento nem
 duplicidade.
-
-### Rollout e E2E no Supabase de produção
-
-Antes da migração foi criado um snapshot consistente no schema
-`dls_backup_v5_20261104`; em seguida foram aplicados o trigger de conclusão e a
-v5, em cerca de 2 s. O schema cache foi recarregado, o frontend foi publicado e a v5 foi
-reaplicada para cobrir a janela em que abas antigas ainda podiam gravar.
-
-O teste transacional real, encerrado com `ROLLBACK`, exercitou:
-
-- sequência própria: `dls_next_demand_sequence(1102) = 1103`;
-- criação coletiva `DLS-1103` com 2 reclamantes, 2 cálculos, 1 principal e 1
-  co-responsável, reclamante legado sincronizado;
-- conclusão com crédito/data, segunda conclusão idempotente, correção de crédito
-  e preservação do crédito após re-salvar o agregado;
-- reabertura com limpeza de crédito/data e nova conclusão pelo co-responsável;
-- exclusão transacional, com zero filhos restantes.
-
-O teste pela API REST pública (anon key, mesmo caminho do frontend) criou uma
-demanda de teste, leu o agregado, concluiu, reabriu e excluiu. A checagem final
-não encontrou linhas `DLS-E2E-*`, nem a demanda transitória `DLS-1103`; as
-contagens de produção permaneceram 871/812/871/871 com 752 créditos.
-
-A validação final do frontend em produção carregou 871 demandas, 812
-reclamantes, 871 cálculos e 871 vínculos com `hasColetivas: true`,
-`relatedDataReady: true`, zero erros de validação e zero principal
-duplicado/ausente.
 
 ### Verificações de código
 
@@ -587,31 +521,27 @@ para o início da função e foi adicionado um teste de regressão em
 Limitações desse harness PGlite: ele não usa PostgREST/RLS reais, não mede
 concorrência, não cobre acessibilidade/responsividade e a importação do backup
 completo (797 demandas via RPCs sequenciais) levou mais de 30 segundos no
-navegador local. O harness PostgreSQL 17 + PostgREST 16.5 usa uma API real; o
-rollout posterior no Supabase confirmou o schema, as RPCs e os dados reais. A
-validação de RLS por identidade continua pendente porque a autenticação é
-client-side.
+navegador local. O harness PostgreSQL 17 + PostgREST 16.5 usa uma API real, mas
+ainda não o Supabase/RLS por identidade. O E2E em staging com Supabase real
+continua pendente.
 
 ## 8. O que não foi executado
 
-- Teste E2E completo pela interface de produção com login real, incluindo o fluxo
-  `FileReader` de importação de backup no navegador; a criação/conclusão/exclusão
-  foi exercitada pelas RPCs reais via SQL e REST, e a carga/validação do frontend
-  foi exercitada no navegador de produção sem login.
-- Testes de acessibilidade e responsividade no navegador real.
-- Testes de concorrência com múltiplos navegadores/usuários reais; a concorrência
-  de sequência, conclusão e reidratação foi exercitada nos harnesses locais.
-- Importação completa do backup de 871 demandas no navegador real; a validação
-  do payload e a leitura paginada foram executadas, mas o tempo de uma restauração
-  completa em produção não foi medido.
+- Aplicação da migração no Supabase de produção ou staging.
+- Testes E2E contra o Supabase real/staging; o fluxo funcional foi exercitado em
+  PostgreSQL 17.6 + PostgREST 16.5 locais, com RLS permissiva do schema base,
+  sem Supabase Auth/identidade, acessibilidade ou responsividade.
+- Testes de concorrência com múltiplos navegadores/usuários reais.
+- Testes de volume no Supabase real; a carga de 796 demandas foi exercitada no
+  PGlite e no PostgREST local, não no Supabase de produção.
 - Validação de RLS/permissões por usuário no banco (a arquitetura atual não
-  fornece identidade de servidor; ver T33 na seção 9).
+  fornece identidade de servidor).
 - Execução dos harnesses locais (PGlite e PostgREST) dentro do CI do repositório;
   eles foram validações temporárias, não testes versionados.
 
-A migração, o deploy, a reaplicação do backfill e os testes transacionais/REST
-em produção foram executados; os limites acima são de cobertura de interface,
-identidade e operação concorrente real.
+Não há resultados de execução da migração em produção a apresentar. Nenhuma
+operação de escrita foi realizada no banco de produção; a auditoria da seção 7
+foi somente leitura.
 
 ## 9. Limitações e riscos conhecidos
 
@@ -647,40 +577,28 @@ cálculos e créditos; o fluxo de restauração é backup/importação.
 
 ### Cobertura E2E
 
-O fluxo funcional foi exercitado nos harnesses locais e, em produção, pelas RPCs
-reais via SQL e REST (criação, conclusão, reabertura, correção, preservação de
-crédito e exclusão). A interface autenticada completa e o fluxo `FileReader` de
-importação ainda não foram reexecutados no navegador de produção. A importação
+O fluxo funcional foi exercitado nos harnesses locais descritos na seção 7,
+incluindo PostgREST real, mas ainda não no Supabase real/staging. A importação
 completa de backup executa uma RPC por demanda; com 797 demandas ela levou mais
-de 30 segundos no harness PGlite e o tempo em produção ainda não foi medido.
+de 30 segundos no harness PGlite e precisa ser medida em homologação antes de ser
+usada como rotina operacional.
 
 ## 10. Rollout
 
-O rollout de produção foi executado em 04/11/2026:
+1. Backup completo e validação do restore em ambiente separado.
+2. Confirmar pré-requisitos v2/v4 e `dls_calculistas_metricas.sql`.
+3. Aplicar `dls_migration_v5_demandas_coletivas.sql` em homologação e recarregar
+   o schema da API se as RPCs novas não aparecerem no PostgREST.
+4. Rodar `select public.dls_relatorio_migracao_v5();`.
+5. Conferir principal único, filhos sem principal, cálculos legados, view e
+   sequências (`demandas` deve estar no maior ID; o próximo cadastro deve ser
+   maior+1, não um ID legado).
+6. Publicar frontend e limpar cache.
+7. Homologar criação/edição/conclusão/reabertura/relatórios/exportação/backup.
+8. Repetir em produção com backup, janela e autorização.
+9. Monitorar erros de console, respostas 4xx/5xx do Supabase e contagens.
 
-1. **Concluído:** snapshot no schema `dls_backup_v5_20261104` e backup externo
-   validado.
-2. **Concluído:** pré-requisitos v4 e trigger `dls_set_concluida_em` confirmados.
-3. **Concluído:** `dls_calculistas_metricas.sql` e a v5 aplicados no Supabase de
-   produção; schema cache recarregado. Não havia staging Supabase separado; o
-   ensaio foi feito no PostgreSQL 17.6 local com os dados reais.
-4. **Concluído:** `dls_relatorio_migracao_v5()` retornou zero exceções.
-5. **Concluído:** principal único, filhos sem principal, créditos legados, view e
-   sequências conferidos; `main = 1102` e próximo ID `DLS-1103`.
-6. **Concluído:** frontend publicado na Vercel (commit `e8750f1`).
-7. **Concluído:** criação coletiva, conclusão/correção/reabertura, preservação de
-   crédito, exclusão e backup foram validados em produção por SQL e REST.
-8. **Concluído:** v5 reaplicada após o deploy para a janela de abas antigas.
-9. **Em andamento operacional:** monitorar erros de console, respostas 4xx/5xx do
-   Supabase, novos IDs e eventuais demandas antigas criadas por abas em cache
-   (reexecutar o backfill idempotente se aparecerem).
-
-## 11. Validação mínima — checklist
-
-Os itens de criação, conclusão, reabertura, correção de crédito, preservação de
-crédito e exclusão foram executados em produção via SQL/REST. Importação
-completa, CSV/XLSX e interface autenticada permanecem cobertos pelos harnesses
-locais.
+## 11. Validação mínima em homologação
 
 - Criar demanda coletiva com 1 principal + 2 co-responsáveis e 2 reclamantes;
   conferir que o ID é o maior existente + 1.
@@ -706,19 +624,15 @@ soltas do script.
 
 ### Rollback do frontend
 
-Reverter `index.html` para a versão anterior ao commit `e8750f1`. O schema v5
-pode permanecer, pois é aditivo; a versão antiga ignora as novas colunas/tabelas.
-Demandas criadas por abas antigas após o deploy não terão filhos v5; reexecute o
-backfill idempotente antes de retornar ao frontend novo. Não importar backups v5
+Reverter `index.html` para a versão anterior. O schema v5 pode permanecer, pois é
+aditivo; a versão antiga ignora as novas colunas/tabelas. Não importar backups v5
 em frontend antigo.
 
 ### Rollback completo
 
-Restaurar o snapshot anterior à migração. Em produção, o snapshot está no schema
-`dls_backup_v5_20261104` e o backup externo validado está em
-`C:\Users\paulo\Downloads\DLS-backups\`. Não dropar tabelas/colunas manualmente
-sem backup e autorização: cálculos, créditos, histórico e relacionamentos podem
-ser perdidos.
+Restaurar o snapshot anterior à migração. Não dropar tabelas/colunas manualmente
+em produção sem backup e autorização: cálculos, créditos, histórico e
+relacionamentos podem ser perdidos.
 
 ### Incidente após o rollout
 
@@ -726,8 +640,6 @@ Bloquear escritas, exportar o estado atual, restaurar o snapshot, corrigir e
 revalidar em homologação antes de nova promoção.
 
 ## 13. Arquivos de deploy
-
-Produção: `https://sistema-dls.vercel.app`, deploy do commit `e8750f1`.
 
 - `index.html`
 - `dls_demandas_coletivas.js`
