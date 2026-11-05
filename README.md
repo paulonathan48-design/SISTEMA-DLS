@@ -252,15 +252,6 @@ passou em `validateBackupPayload` e os 796 agregados passaram na
 normalização/validação; o fluxo completo de `FileReader`/importação no navegador
 não foi reexecutado contra o PostgREST real.
 
-Em 04/11/2026 a produção já tinha crescido para **843 demandas, 792 reclamantes,
-726 entregues e `main = 1071`**. Foi capturado um backup completo somente leitura
-(1.187.431 bytes; SHA-256
-`385964cc73b78bf9143a79892a49c89dbc26e1134967df7edc7b68ee6de04b1a`) e um ensaio
-local com esses dados aplicou a v4, as colunas legadas, o trigger de conclusão e
-a v5 duas vezes. Resultado: 843/792/843/843, 726 créditos, zero exceções,
-`main = 1071` e primeira nova demanda `DLS-1072`. Nenhuma escrita foi feita no
-Supabase durante o ensaio.
-
 ## Segurança e limitações conhecidas
 
 - **A autenticação atual é client-side.** O DLS usa a chave anon pública do
