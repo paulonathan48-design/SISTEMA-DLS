@@ -75,28 +75,3 @@ test('reset é bloqueado quando a estrutura v5 existe', () => {
   assert.match(trecho, /Reset desativado após a migração v5/);
   assert.match(trecho, /return;/);
 });
-
-test('novas demandas usam sequência própria com piso atômico, sem depender de main', () => {
-  const start = html.indexOf('nextDemandSequence()');
-  assert.ok(start >= 0);
-  const end = html.indexOf('\n      calculistaToRow', start);
-  assert.ok(end > start);
-  const fn = html.slice(start, end);
-  assert.match(fn, /dls_next_demand_sequence/);
-  assert.match(fn, /p_last_used/);
-  assert.match(fn, /getAllDemandas\(\)/);
-  assert.match(fn, /seq <= ultimo/);
-  assert.match(html, /nextId\(tipo = 'main'\)/);
-  assert.match(html, /sequenceName = 'calculistas'/);
-  assert.match(html, /sequenceName = 'clientes'/);
-  assert.match(html, /dls_next_sequence', \{ sequence_name: sequenceName, default_value: lastUsed \}/);
-  assert.match(html, /proximaIdentidadeDemanda\(\) \{\s*const seq = this\.nextDemandSequence\(\);/);
-  assert.match(html, /const identidade = this\.proximaIdentidadeDemanda\(\);/);
-  assert.match(html, /data\.id = 'CALC-' \+ this\.nextId\('calculista'\)/);
-  assert.match(html, /data\.id = 'CLI-' \+ this\.nextId\('cliente'\)/);
-  assert.match(html, /_maiorIdNumerico\(this\.getAllDemandas\(\), 'DLS', 100\)/);
-  const saveStart = html.indexOf('saveDemanda(data) {');
-  const saveEnd = html.indexOf('\n      deleteDemanda', saveStart);
-  assert.ok(saveStart > 0 && saveEnd > saveStart);
-  assert.doesNotMatch(html.slice(saveStart, saveEnd), /this\.nextId\(\)/);
-});

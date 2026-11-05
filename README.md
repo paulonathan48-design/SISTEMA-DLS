@@ -46,10 +46,6 @@ conforme a especificação `DLS_Especificacao_Demandas_Coletivas_v2.md`.
   cruzadas e não apaga demandas ausentes antes de todas as gravações concluírem.
 - A carga inicial pagina as tabelas para não interpretar o limite de linhas do
   PostgREST como ausência de reclamantes, cálculos ou equipe.
-- A numeração de demandas, clientes e calculistas usa sequências separadas com
-  piso no maior ID já existente. A v5 adiciona `dls_next_demand_sequence` e
-  fortalece `dls_next_sequence`; assim uma sequência legada defasada (por exemplo,
-  `main = 100` com IDs `DLS-1023`) não gera IDs antigos ou colidentes.
 - O XLSX detalhado contém abas `Demandas`, `Reclamantes`, `Equipe` e
   `Calculos`, com uma linha por relacionamento e IDs preservados.
 - Relatórios e exportações mantêm separados:
@@ -98,16 +94,15 @@ conforme a especificação `DLS_Especificacao_Demandas_Coletivas_v2.md`.
    ainda não existir. A migração v5 garante a coluna `concluida_em`, mas não
    substitui esse trigger.
 4. Execute `dls_migration_v5_demandas_coletivas.sql` inteiro em homologação.
-   Se as novas RPCs (`dls_next_demand_sequence`, `dls_salvar_demanda_coletiva`,
-   `dls_concluir_calculo`, etc.) retornarem erro de função não encontrada/schema
-   cache, recarregue o schema da API no painel do Supabase antes de testar.
-5. Valide com as consultas da seção seguinte, inclusive as sequências, e compare
-   os totais com o banco anterior.
+   Se as novas RPCs retornarem erro de função não encontrada/schema cache,
+   recarregue o schema da API no painel do Supabase antes de testar.
+5. Valide com as consultas da seção seguinte e compare os totais com o banco
+   anterior.
 6. Publique `index.html`, `dls_demandas_coletivas.js` e os demais arquivos
    estáticos. Faça um hard refresh/limpeza de cache nos navegadores.
-7. Execute os testes manuais de fumaça em homologação: criar demanda coletiva e
-   conferir que o ID é o maior existente + 1, editar equipe, concluir/reabrir
-   cálculo, gerar relatório, exportar e importar backup.
+7. Execute os testes manuais de fumaça em homologação: criar demanda coletiva,
+   editar equipe, concluir/reabrir cálculo, gerar relatório, exportar e importar
+   backup.
 8. Somente depois, repita a migração em produção com backup validado.
 
 ## Validação pós-migração
@@ -139,19 +134,6 @@ select concluido_por_calculista_id, count(*) as creditos
  where status = 'entregue' and concluido_em is not null
  group by 1
  order by creditos desc;
-
--- Sequências: main pode permanecer defasada para os IDs históricos. As
--- sequências de demandas, clientes e calculistas recebem o maior ID como piso;
--- antes do primeiro uso, as linhas novas ainda podem não existir.
-select name, current_value
-  from public.dls_sequences
- where name in ('main', 'demandas', 'clientes', 'calculistas')
- order by name;
-
-select max((regexp_replace(id, '\D', '', 'g'))::int) as maior_id_demanda
-  from public.dls_demandas;
--- O primeiro cadastro novo deve receber DLS-(maior_id_demanda + 1), por exemplo
--- DLS-1024 com a linha de base de 796 demandas em 03/11/2026.
 
 -- Não deve haver demanda com mais de um principal ativo.
 select demanda_id, count(*)
@@ -218,30 +200,16 @@ equipe e exclusão transacional. Um segundo cenário carregou, somente para
 leitura, os 796 registros reais de produção e confirmou 749 reclamantes, 796
 cálculos, 718 créditos (distribuição por calculista idêntica à linha de base),
 47 cálculos sem reclamante e zero principal duplicado; a migração foi reaplicada
-sem alterar contagens. Esses testes PGlite não substituem a validação em Supabase
-real (RLS, concorrência e volume).
+sem alterar contagens. Esses testes não substituem a validação em Supabase real
+(RLS, PostgREST, concorrência).
 
 Também foi executado um E2E local temporário, com PGlite e uma fachada REST, que
 serviu o app real e autenticou um admin de teste. Ele cobriu criação de demanda
 coletiva, conclusão/correção/reabertura de crédito, preservação do crédito após
 troca de equipe, entrega em duas fases, relatórios, CSV, XLSX, backup/restauração
 e exclusão transacional. Esse teste encontrou e corrigiu um `ReferenceError` de
-TDZ na exportação XLSX; a regressão está coberta por `tests/client.test.js`.
-
-Em seguida, o mesmo app foi exercitado contra **PostgreSQL 17.6 real + PostgREST
-16.5** local, com os 796 registros lidos somente para leitura da API de produção.
-A migração v5 foi aplicada duas vezes sobre esses dados, o app carregou
-796/749/796/796 e o relatório retornou 718 créditos e zero exceções. Nesse
-ambiente real foram validados criação coletiva, conclusão/reabertura, crédito
-preservado após remoção da equipe, bloqueio de executor fora da equipe, XLSX com
-10 abas, backup/exportação e exclusão transacional. O schema local que
-reproduzia a carga de produção tinha a sequência `main` defasada em 100,
-embora os IDs importados chegassem a `DLS-1023`, `CALC-708` e `CLI-1005`; a
-numeração foi corrigida para sequências separadas com piso atômico. Na
-auditoria de 03/11/2026 a produção tinha somente `main = 1023` (sem as linhas
-`demandas`, `calculistas` ou `clientes`), que a v5 cria no primeiro uso. Esses
-harnesses não substituem a validação em Supabase (RLS por identidade,
-concorrência e volume de produção).
+TDZ na exportação XLSX; a regressão está coberta por `tests/client.test.js`. O
+harness não é versionado e não substitui o E2E em staging com Supabase real.
 
 ## Segurança e limitações conhecidas
 

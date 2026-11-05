@@ -3484,49 +3484,11 @@
         }
         else if (key === this.KEY_LOGS) this.replaceAll('dls_logs', this.cache[key].slice(0, 200).map(item => this.logToRow(item)));
       },
-      nextId(tipo = 'main') {
+      nextId() {
         this.ensureLoaded();
-        let sequenceName = 'main';
-        let lastUsed = 100;
-        if (tipo === 'calculista') {
-          sequenceName = 'calculistas';
-          lastUsed = this._maiorIdNumerico(this.cache[this.KEY_CALCULISTAS] || [], 'CALC', 100);
-        } else if (tipo === 'cliente') {
-          sequenceName = 'clientes';
-          lastUsed = this._maiorIdNumerico(this.cache[this.KEY_CLIENTES] || [], 'CLI', 100);
-        }
-        const result = this.rpc('dls_next_sequence', { sequence_name: sequenceName, default_value: lastUsed });
+        const result = this.rpc('dls_next_sequence', { sequence_name: 'main', default_value: 100 });
         const seq = Number(Array.isArray(result) ? (result[0]?.dls_next_sequence || result[0]) : result);
         if (!Number.isFinite(seq)) throw new Error('A função dls_next_sequence não retornou um número.');
-        this.cache[this.KEY_SEQ] = String(seq);
-        return seq;
-      },
-      _maiorIdNumerico(itens, prefixo, minimo = 100) {
-        return (itens || []).reduce((max, item) => {
-          const match = String(item.id || '').match(new RegExp('^' + prefixo + '-(\\d+)$'));
-          const valor = match ? Number(match[1]) : 0;
-          return Number.isFinite(valor) && valor > max ? valor : max;
-        }, minimo);
-      },
-      nextDemandSequence() {
-        this.ensureLoaded();
-        // A sequência 'main' é compartilhada por clientes/calculistas e pode estar
-        // defasada em relação aos IDs DLS-xxxx já existentes. A sequência de
-        // demandas é própria e recebe o maior ID conhecido como piso atômico.
-        const ultimo = this._maiorIdNumerico(this.getAllDemandas(), 'DLS', 100);
-        let result;
-        try {
-          result = this.rpc('dls_next_demand_sequence', { p_last_used: ultimo });
-        } catch (e) {
-          // Compatibilidade com bancos anteriores à v5.
-          console.warn('[DLS] RPC dls_next_demand_sequence indisponível; usando sequência legada.', e);
-          result = this.rpc('dls_next_sequence', { sequence_name: 'demandas', default_value: ultimo });
-        }
-        const raw = Array.isArray(result)
-          ? (result[0]?.dls_next_demand_sequence ?? result[0]?.dls_next_sequence ?? result[0])
-          : (result?.dls_next_demand_sequence ?? result?.dls_next_sequence ?? result);
-        let seq = Number(raw);
-        if (!Number.isFinite(seq) || seq <= ultimo) seq = ultimo + 1;
         this.cache[this.KEY_SEQ] = String(seq);
         return seq;
       },
@@ -3695,7 +3657,7 @@
       },
 
       proximaIdentidadeDemanda() {
-        const seq = this.nextDemandSequence();
+        const seq = this.nextId();
         return {
           id: 'DLS-' + seq,
           numero: 'DLS-' + new Date().getFullYear() + '-' + String(seq).padStart(3, '0')
@@ -3859,7 +3821,7 @@
       saveCalculista(data) {
         const isNew = !data.id;
         if (isNew) {
-          data.id = 'CALC-' + this.nextId('calculista');
+          data.id = 'CALC-' + this.nextId();
         }
         // Update cache (cadastro; métricas são recalculadas na leitura a partir das demandas)
         this.ensureLoaded();
@@ -3899,7 +3861,7 @@
       saveCliente(data) {
         const isNew = !data.id;
         if (isNew) {
-          data.id = 'CLI-' + this.nextId('cliente');
+          data.id = 'CLI-' + this.nextId();
           data.totalHistorico = 0;
         }
         const list = this.getClientes();
@@ -3976,9 +3938,9 @@
             data = list[i];
           }
         } else {
-          const identidade = this.proximaIdentidadeDemanda();
-          data.id = identidade.id;
-          data.numero = identidade.numero;
+          const seq = this.nextId();
+          data.id = 'DLS-' + seq;
+          data.numero = 'DLS-' + new Date().getFullYear() + '-' + String(seq).padStart(3, '0');
           data.criadoEm = new Date().toISOString();
           data.updatedAt = new Date().toISOString();
           data.historico = [{ data: new Date().toLocaleString('pt-BR'), texto: 'Demanda criada', autor: userName }];

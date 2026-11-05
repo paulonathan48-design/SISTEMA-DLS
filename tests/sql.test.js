@@ -152,24 +152,3 @@ test('crédito concluído é protegido contra PATCH direto fora das RPCs auditad
   const auditConfigs = sql.match(/set_config\('dls\.calculo_auditado', 'on', true\)/gi) || [];
   assert.ok(auditConfigs.length >= 2, 'reabertura e correção precisam autorizar a alteração auditada');
 });
-
-test('migração v5 fornece sequência de demandas com piso atômico e grant', () => {
-  const fn = sql.match(/create or replace function public\.dls_next_demand_sequence[\s\S]*?\$\$;/i);
-  assert.ok(fn, 'RPC dls_next_demand_sequence deve existir');
-  assert.match(fn[0], /p_last_used integer/i);
-  assert.match(fn[0], /greatest\(coalesce\(p_last_used, 100\), 100\)/i);
-  assert.match(fn[0], /from public\.dls_demandas/i);
-  assert.match(fn[0], /max\(\(regexp_replace\(id/i);
-  assert.match(fn[0], /greatest\(public\.dls_sequences\.current_value, excluded\.current_value\)/i);
-  assert.match(fn[0], /current_value = current_value \+ 1/i);
-  assert.match(sql, /grant execute on function public\.dls_next_demand_sequence\(integer\) to anon, authenticated/i);
-});
-
-test('sequência genérica também eleva a linha existente ao piso informado', () => {
-  const fn = sql.match(/create or replace function public\.dls_next_sequence[\s\S]*?\$\$;/i);
-  assert.ok(fn, 'RPC dls_next_sequence deve ser redefinida');
-  assert.match(fn[0], /floor_value integer := greatest\(coalesce\(default_value, 100\), 100\)/i);
-  assert.match(fn[0], /greatest\(public\.dls_sequences\.current_value, excluded\.current_value\)/i);
-  assert.match(fn[0], /current_value = current_value \+ 1/i);
-  assert.match(sql, /grant execute on function public\.dls_next_sequence\(text, integer\) to anon, authenticated/i);
-});
