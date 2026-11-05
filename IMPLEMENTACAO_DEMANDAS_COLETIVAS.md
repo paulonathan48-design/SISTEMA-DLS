@@ -398,10 +398,7 @@ produção tinha somente `main = 1023`, sem as linhas `demandas`, `calculistas` 
 - a v5 cria as linhas `demandas`, `calculistas` e `clientes` no primeiro uso, com
   piso no maior ID do respectivo catálogo;
 - a criação local passou a gerar `DLS-1024`, e os testes de regressão verificam
-  esse comportamento;
-- em transação que removeu a linha `demandas` (equivalente ao estado de produção),
-  `dls_next_demand_sequence(1023)` retornou 1024 e criou a linha com esse valor;
-  o `rollback` restaurou a linha local em 1023.
+  esse comportamento.
 
 Esse ambiente usa as políticas RLS permissivas do schema base (anon), não
 Supabase Auth/RLS por identidade e não substitui staging. A seguir foram
@@ -412,11 +409,6 @@ executadas validações adicionais de concorrência, reidratação e exportaçã
 - **Concorrência da sequência:** 20 chamadas paralelas a
   `dls_next_demand_sequence(1023)` retornaram 20 IDs únicos, de 1024 a 1043, sem
   erro HTTP. A sequência local foi restaurada para 1023 após o teste.
-- **Conclusão concorrente (T29):** 20 chamadas paralelas a
-  `dls_concluir_calculo` para o mesmo cálculo retornaram HTTP 200; exatamente uma
-  retornou `idempotente: false` e 19 retornaram `idempotente: true`, com um único
-  crédito (`CALC-119`) e uma única data de conclusão. A demanda de teste foi
-  excluída e a linha de base 796/749/796/796/718 foi restaurada.
 - **Reidratação completa:** os 796 agregados carregados foram regravados pela
   própria RPC `dls_salvar_demanda_coletiva`, com `incluirConclusao: true`, em
   **42,4 segundos**, sem falhas.

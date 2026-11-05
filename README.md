@@ -240,17 +240,15 @@ embora os IDs importados chegassem a `DLS-1023`, `CALC-708` e `CLI-1005`; a
 numeração foi corrigida para sequências separadas com piso atômico. Na
 auditoria de 03/11/2026 a produção tinha somente `main = 1023` (sem as linhas
 `demandas`, `calculistas` ou `clientes`), que a v5 cria no primeiro uso. Esses
-harnesses não substituem a validação em Supabase (RLS por identidade e volume
-de produção).
+harnesses não substituem a validação em Supabase (RLS por identidade,
+concorrência e volume de produção).
 
 Na mesma sessão local foram executadas 20 chamadas concorrentes à RPC de
 sequência (20 IDs únicos, 1024–1043), a regravação dos 796 agregados pela RPC
 (42,4 s, zero falhas, contagens e créditos idênticos) e exportações CSV reais.
-Também foram disparadas 20 conclusões concorrentes do mesmo cálculo: uma
-transição efetiva, 19 idempotentes e um único crédito/data. O backup exportado
-passou em `validateBackupPayload` e os 796 agregados passaram na
-normalização/validação; o fluxo completo de `FileReader`/importação no navegador
-não foi reexecutado contra o PostgREST real.
+O backup exportado passou em `validateBackupPayload` e os 796 agregados passaram
+na normalização/validação; o fluxo completo de `FileReader`/importação no
+navegador não foi reexecutado contra o PostgREST real.
 
 ## Segurança e limitações conhecidas
 
