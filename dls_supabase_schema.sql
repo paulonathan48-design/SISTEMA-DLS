@@ -218,7 +218,7 @@ BEGIN
   FOR dem IN
     SELECT id, numero
     FROM demandas
-    WHERE prazo < CURRENT_DATE
+    WHERE prazo < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
       AND status NOT IN ('entregue', 'cancelada', 'atrasada')
   LOOP
     UPDATE demandas SET status = 'atrasada' WHERE id = dem.id;
@@ -263,13 +263,13 @@ SELECT
   r.nome           AS responsavel_nome,
   r.espec          AS responsavel_espec,
   -- prazo calculado
-  (d.prazo - CURRENT_DATE) AS dias_restantes,
+  (d.prazo - (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS dias_restantes,
   CASE
     WHEN d.prazo IS NULL                               THEN NULL
-    WHEN d.prazo < CURRENT_DATE                        THEN 'overdue'
-    WHEN d.prazo = CURRENT_DATE                        THEN 'hoje'
-    WHEN (d.prazo - CURRENT_DATE) <= 2                 THEN 'critico'
-    WHEN (d.prazo - CURRENT_DATE) <= 5                 THEN 'atencao'
+    WHEN d.prazo < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date                        THEN 'overdue'
+    WHEN d.prazo = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date                        THEN 'hoje'
+    WHEN (d.prazo - (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) <= 2                 THEN 'critico'
+    WHEN (d.prazo - (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) <= 5                 THEN 'atencao'
     ELSE 'ok'
   END AS prazo_status
 FROM demandas d
@@ -344,18 +344,18 @@ INSERT INTO clientes (id, nome, tipo, cnpj, cidade, contato, email, tel, sla_con
 
 -- Demandas (datas relativas convertidas para fixas como exemplo)
 INSERT INTO demandas (id, numero, processo, cliente_id, tipo, responsavel_id, prazo, prioridade, origem, status, obs, criado_em) VALUES
-  ('DLS-101','DLS-2025-114','0001234-12.2025.8.26.0000','CLI-3','Cálculo Previdenciário','CALC-1', CURRENT_DATE+4,  'media',   'E-mail',             'triagem',   'Demanda de aposentadoria por invalidez.', NOW()-INTERVAL '1 day'),
-  ('DLS-102','DLS-2025-113','0002345-45.2025.8.26.0000','CLI-2','Cálculo Trabalhista',   'CALC-2', CURRENT_DATE+10, 'baixa',   'E-mail',             'andamento', 'Rescisão contratual.',                   NOW()-INTERVAL '2 days'),
-  ('DLS-103','DLS-2025-112','0003456-78.2025.8.26.0000','CLI-2','Cálculo Trabalhista',   NULL,     CURRENT_DATE,    'urgente', 'Sistema do cliente', 'pendente',  'Urgente — sem responsável.',             NOW()),
-  ('DLS-104','DLS-2025-111','0004567-90.2025.8.26.0000','CLI-1','Liquidação de Sentença','CALC-3', CURRENT_DATE+14, 'media',   'E-mail',             'revisao',   '',                                       NOW()-INTERVAL '3 days'),
-  ('DLS-105','DLS-2025-110','0005678-01.2025.8.26.0000','CLI-4','Atualização Monetária', 'CALC-2', CURRENT_DATE+1,  'alta',    'E-mail',             'andamento', '',                                       NOW()-INTERVAL '4 days'),
-  ('DLS-106','DLS-2025-089','0006789-12.2025.8.26.0000','CLI-5','Liquidação de Sentença','CALC-4', CURRENT_DATE-2,  'urgente', 'E-mail',             'atrasada',  'VENCIDA',                                NOW()-INTERVAL '10 days'),
-  ('DLS-107','DLS-2025-088','0007890-23.2025.8.26.0000','CLI-6','Cálculo Trabalhista',   'CALC-5', CURRENT_DATE-3,  'alta',    'Manual',             'atrasada',  'VENCIDA há 1 dia',                       NOW()-INTERVAL '12 days'),
-  ('DLS-108','DLS-2025-103','0008901-34.2025.8.26.0000','CLI-1','Cálculo Tributário',    'CALC-3', CURRENT_DATE+20, 'baixa',   'Portal',             'andamento', '',                                       NOW()-INTERVAL '5 days'),
-  ('DLS-109','DLS-2025-097','0009012-45.2025.8.26.0000','CLI-5','Cálculo Previdenciário','CALC-1', CURRENT_DATE,    'alta',    'E-mail',             'andamento', 'Prazo hoje.',                            NOW()-INTERVAL '7 days'),
-  ('DLS-110','DLS-2025-095','0001122-55.2025.8.26.0000','CLI-4','Honorários Advocatícios','CALC-4',CURRENT_DATE+7,  'media',   'E-mail',             'pendente',  '',                                       NOW()-INTERVAL '3 days'),
-  ('DLS-111','DLS-2025-080','0002233-66.2025.8.26.0000','CLI-1','Liquidação de Sentença','CALC-1', CURRENT_DATE-15, 'media',   'E-mail',             'entregue',  'Entregue no prazo.',                     NOW()-INTERVAL '25 days'),
-  ('DLS-112','DLS-2025-075','0003344-77.2025.8.26.0000','CLI-2','Cálculo Trabalhista',   'CALC-2', CURRENT_DATE-20, 'media',   'E-mail',             'entregue',  '',                                       NOW()-INTERVAL '30 days');
+  ('DLS-101','DLS-2025-114','0001234-12.2025.8.26.0000','CLI-3','Cálculo Previdenciário','CALC-1', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date+4,  'media',   'E-mail',             'triagem',   'Demanda de aposentadoria por invalidez.', NOW()-INTERVAL '1 day'),
+  ('DLS-102','DLS-2025-113','0002345-45.2025.8.26.0000','CLI-2','Cálculo Trabalhista',   'CALC-2', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date+10, 'baixa',   'E-mail',             'andamento', 'Rescisão contratual.',                   NOW()-INTERVAL '2 days'),
+  ('DLS-103','DLS-2025-112','0003456-78.2025.8.26.0000','CLI-2','Cálculo Trabalhista',   NULL,     (NOW() AT TIME ZONE 'America/Sao_Paulo')::date,    'urgente', 'Sistema do cliente', 'pendente',  'Urgente — sem responsável.',             NOW()),
+  ('DLS-104','DLS-2025-111','0004567-90.2025.8.26.0000','CLI-1','Liquidação de Sentença','CALC-3', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date+14, 'media',   'E-mail',             'revisao',   '',                                       NOW()-INTERVAL '3 days'),
+  ('DLS-105','DLS-2025-110','0005678-01.2025.8.26.0000','CLI-4','Atualização Monetária', 'CALC-2', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date+1,  'alta',    'E-mail',             'andamento', '',                                       NOW()-INTERVAL '4 days'),
+  ('DLS-106','DLS-2025-089','0006789-12.2025.8.26.0000','CLI-5','Liquidação de Sentença','CALC-4', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date-2,  'urgente', 'E-mail',             'atrasada',  'VENCIDA',                                NOW()-INTERVAL '10 days'),
+  ('DLS-107','DLS-2025-088','0007890-23.2025.8.26.0000','CLI-6','Cálculo Trabalhista',   'CALC-5', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date-3,  'alta',    'Manual',             'atrasada',  'VENCIDA há 1 dia',                       NOW()-INTERVAL '12 days'),
+  ('DLS-108','DLS-2025-103','0008901-34.2025.8.26.0000','CLI-1','Cálculo Tributário',    'CALC-3', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date+20, 'baixa',   'Portal',             'andamento', '',                                       NOW()-INTERVAL '5 days'),
+  ('DLS-109','DLS-2025-097','0009012-45.2025.8.26.0000','CLI-5','Cálculo Previdenciário','CALC-1', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date,    'alta',    'E-mail',             'andamento', 'Prazo hoje.',                            NOW()-INTERVAL '7 days'),
+  ('DLS-110','DLS-2025-095','0001122-55.2025.8.26.0000','CLI-4','Honorários Advocatícios','CALC-4',(NOW() AT TIME ZONE 'America/Sao_Paulo')::date+7,  'media',   'E-mail',             'pendente',  '',                                       NOW()-INTERVAL '3 days'),
+  ('DLS-111','DLS-2025-080','0002233-66.2025.8.26.0000','CLI-1','Liquidação de Sentença','CALC-1', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date-15, 'media',   'E-mail',             'entregue',  'Entregue no prazo.',                     NOW()-INTERVAL '25 days'),
+  ('DLS-112','DLS-2025-075','0003344-77.2025.8.26.0000','CLI-2','Cálculo Trabalhista',   'CALC-2', (NOW() AT TIME ZONE 'America/Sao_Paulo')::date-20, 'media',   'E-mail',             'entregue',  '',                                       NOW()-INTERVAL '30 days');
 
 -- Histórico inicial das demandas
 INSERT INTO demanda_historico (demanda_id, texto, autor, data) VALUES

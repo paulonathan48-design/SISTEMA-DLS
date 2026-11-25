@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const sqlPath = path.join(__dirname, '..', 'dls_migration_v5_demandas_coletivas.sql');
 const sql = fs.readFileSync(sqlPath, 'utf8');
+const metricas = fs.readFileSync(path.join(__dirname, '..', 'dls_calculistas_metricas.sql'), 'utf8');
 
 test('migração é transacional, aditiva e idempotente', () => {
   assert.match(sql, /^\s*begin;/im);
@@ -172,4 +173,13 @@ test('sequência genérica também eleva a linha existente ao piso informado', (
   assert.match(fn[0], /greatest\(public\.dls_sequences\.current_value, excluded\.current_value\)/i);
   assert.match(fn[0], /current_value = current_value \+ 1/i);
   assert.match(sql, /grant execute on function public\.dls_next_sequence\(text, integer\) to anon, authenticated/i);
+});
+
+test('métricas SQL usam o calendário oficial de Brasília e não deslocam conclusões', () => {
+  assert.doesNotMatch(metricas, /concluida_em::date/i);
+  assert.match(metricas, /\(d\.concluida_em at time zone 'America\/Sao_Paulo'\)::date <= d\.prazo/i);
+  assert.match(metricas, /to_timestamp\(dtxt, 'DD\/MM\/YYYY, HH24:MI:SS'\)::timestamp at time zone 'America\/Sao_Paulo'/i);
+  assert.match(metricas, /to_timestamp\(dtxt, 'DD\/MM\/YYYY HH24:MI'\)::timestamp at time zone 'America\/Sao_Paulo'/i);
+  assert.match(metricas, /\(dtxt::timestamp at time zone 'America\/Sao_Paulo'\)/i);
+  assert.ok(metricas.includes("ELSIF dtxt ~ '(Z|[+-]\\d{2}:?\\d{2})$' THEN"));
 });

@@ -42,14 +42,15 @@ limitação está detalhada na seção 9.
 | `dls_migration_v5_demandas_coletivas.sql` | Migração completa v5, em transação única. |
 | `tests/domain.test.js` | Testes de regras de domínio, legado, backup, métricas e escape. |
 | `tests/sql.test.js` | Testes estáticos de estrutura, idempotência, constraints, RPCs e grants. |
-| `tests/client.test.js` | Invariantes estáticas do frontend: data histórica, estado de erro, reset, paginação, exportações e regressão de TDZ no XLSX. |
+| `tests/client.test.js` | Invariantes estáticas do frontend: data histórica, estado de erro, reset, paginação, exportações, logotipo e regressão de TDZ no XLSX. |
+| `assets/dls-logo.jpg`, `assets/dls-logo-mark.png` | Logotipo oficial completo e marca compacta, também embutidos como data URI no `index.html`. |
 | `IMPLEMENTACAO_DEMANDAS_COLETIVAS.md` | Este relatório. |
 
 ### Alterados
 
 | Arquivo | Alteração |
 | --- | --- |
-| `index.html` | UI de reclamantes/equipe/cálculos, filtros, detalhe, relatórios, ações de conclusão/reabertura/correção, importação/exportação, exclusão transacional, cache e compatibilidade legada. |
+| `index.html` | UI de reclamantes/equipe/cálculos, filtros, detalhe, relatórios, ações de conclusão/reabertura/correção, importação/exportação, exclusão transacional, cache, identidade visual DLS, impressão e compatibilidade legada. |
 | `README.md` | Instalação, ordem de migração, validação, limitações de segurança, testes, reset e rollback. |
 
 O módulo JS, o SQL, os testes e este relatório fazem parte do histórico
@@ -177,6 +178,11 @@ continuam sendo a fonte dos indicadores de demanda.
 - Essa regra vale para demandas individuais e coletivas com cálculos.
 - Ao editar somente status, usuários não administradores não podem alterar
   equipe, reclamantes, cálculos ou crédito; essa é uma regra de interface.
+- Concluir cálculos e alterar o status/entregar demandas são permissões próprias
+  (`calculos.concluir` e `demandas.entregar`), habilitadas por padrão para o papel
+  `user` e configuráveis por usuário em Configurações > Usuários. A reabertura
+  de demanda já entregue exige `demandas.manage`; reabrir cálculos e corrigir
+  crédito continuam exclusivos de administradores.
 - O reset do banco é bloqueado quando a estrutura v5 está presente.
 
 ### Prazos e métricas
@@ -736,3 +742,460 @@ Produção: `https://sistema-dls.vercel.app`, deploy do commit `e8750f1`.
 - `vercel.json`
 
 Não há bundler, dependências de runtime adicionais ou build step.
+
+## 14. Atualização v3.0 — conclusão classificada e impugnação (v6)
+
+> **Estado em 13/11/2026:** implementação e validação **somente local**. A v6
+> não foi aplicada no Supabase de produção. Nenhuma escrita foi feita em
+> produção durante esta entrega.
+
+### 14.1 Escopo v6
+
+- Conclusão classificada em **Impugnação**, **Concordância**, **Atualização** e
+  **Apresentação**, versionada por demanda.
+- Histórico imutável de conclusões, com uma única versão vigente e snapshots de
+  número da demanda, cliente, modalidade e data oficial.
+- Itens de impugnação por cálculo/reclamante, com valores monetários da DLS e da
+  outra parte, diferença assinada/absoluta gerada pelo banco e direção
+  (`DLS maior`, `Outra parte maior`, `Valores iguais`).
+- Entrega de demanda sempre pela RPC auditada; nunca por gravação direta de
+  `status = 'entregue'`.
+- Reabertura com justificativa obrigatória na interface e no servidor.
+- Relatórios, exportação XLSX/CSV, impressão e dashboard com conclusão,
+  impugnação, filtros, SLA e produtividade por executor creditado.
+- Normalização de `Cálculo Civil` para `Cálculo Cível` e inclusão de `E-Social`.
+- Backups v5 e v6 com restauração segura de status/data/conclusões.
+
+### 14.2 Arquivos v6
+
+- `dls_migration_v6_conclusao_impugnacao.sql`
+- `tests/v6.test.js`
+- `index.html` (classificação, histórico, status inline, dashboard, relatórios,
+  exportações, impressão e backup)
+- `dls_demandas_coletivas.js` (tipos canônicos, analytics, buckets, SLA,
+  validação de backup v6 e helpers de fuso)
+- `tests/domain.test.js`, `tests/client.test.js` (regressões)
+
+### 14.3 Modelo e garantias
+
+- `dls_demanda_conclusoes`: versão, tipo, situação, data oficial, snapshots,
+  auditoria de reabertura e vínculo composto com a demanda.
+- `dls_demanda_impugnacao_itens`: vínculo composto com conclusão, cálculo e
+  reclamante da mesma demanda; diferenças `GENERATED`; sem coluna de total.
+- Triggers bloqueiam `INSERT/UPDATE/DELETE` diretos fora das RPCs
+  (`dls.conclusao_auditada`); RPCs são transacionais, com advisory lock e
+  `SECURITY INVOKER`, preservando o modelo de RLS/grants da v5.
+- `dls_concluir_demanda`, `dls_alterar_status_demanda` e
+  `dls_restaurar_conclusoes_demanda` são as portas de escrita auditadas.
+- A restauração v5 (`p_conclusoes = null`) preserva conclusões existentes; a
+  restauração v6 (`[]`) substitui a lista. `p_concluida_em` nulo usa a data da
+  conclusão vigente restaurada e, depois, a data já existente na demanda.
+
+### 14.4 Validações locais executadas
+
+- PGlite sintético v6, incluindo aplicação dupla, conclusão, impugnação,
+  reabertura, restauração sem apagar conclusões, restauração de data exata e
+  rejeição de escrita direta.
+- Validação somente leitura sobre a carga local de produção v5:
+  **874 demandas, 815 reclamantes, 874 cálculos/equipe, 755 créditos,
+  12 calculistas e 211 `Cálculo Civil` normalizados**. A v6 foi aplicada duas
+  vezes sem alterar contagens, sem conclusões inferidas e com grants para
+  `anon`.
+- Backup v5 local: 871 demandas, 752 entregues, zero demanda entregue com
+  cálculo aberto, crédito/data ausente, reclamante individual múltiplo ou equipe
+  inválida.
+- Testes estáticos: `domain.test.js` 27/27, `sql.test.js` 17/17,
+  `v6.test.js` 10/10, `client.test.js` 23/23 (**77/77** no total); `node --check
+  dls_demandas_coletivas.js` e o JavaScript inline sem erro de sintaxe.
+- Harness PGlite v6: **29/29 verificações**, incluindo aplicação dupla, upsert de
+  demanda entregue, bloqueio de INSERT novo entregue, snapshots imutáveis,
+  restauração v5/v6 e limpeza transacional.
+- E2E local em navegador com PGlite/fachada REST, banco vazio, login de admin
+  local e importação do backup v5 completo de 4,1 MB: **871 demandas e 752
+  entregas restauradas sem erro** após corrigir a fachada para converter
+  `JSON null` em `SQL NULL`. O backup v5 importado manteve 812 reclamantes,
+  871 cálculos/equipe e datas históricas exatas, sem conclusões inferidas.
+- E2E v6 em 13/11/2026, do zero: o recorte de 18 demandas (12 entregues, 2
+  versões e 1 item) foi importado **duas vezes**; em seguida, o backup v6
+  completo (3,7 MB, versão 3) foi importado e **reimportado sobre as 871
+  demandas já existentes**. Resultado final: **871 demandas, 753 entregues, 812
+  reclamantes, 871 cálculos/equipe, 2 versões de conclusão e 1 item**, zero
+  entrega sem data, datas/status exatos e **0 divergências** no comparador. As
+  duas cargas completas terminaram com **0 falhas** capturadas; a reimportação
+  exercitou o upsert de todas as 753 entregas.
+- O E2E v6 encontrou um segundo defeito real: o gatilho `BEFORE INSERT` de
+  `dls_demandas` bloqueava o `INSERT ... ON CONFLICT DO UPDATE` usado por
+  `dls_salvar_demanda_coletiva` ao salvar uma demanda já entregue. A correção
+  permite o upsert somente quando a linha já existe e continua bloqueando a
+  criação de demanda nova já entregue; há teste de regressão no PGlite e em
+  `tests/v6.test.js`.
+- Fluxos de UI exercitados no conjunto completo: granularidade
+  mensal/trimestral/anual, SLA com amostra explícita, drill-down de cartões,
+  filtros e limpeza para `mes_atual`, relatório de todo o período com **754
+  versões de conclusão** (752 legado + 2 v6) e 1 item, XLSX/CSV, impressão
+  oficial, reabertura com motivo, rollback de status em falha simulada, reset
+  bloqueado e todas as quatro classificações (Impugnação, Concordância,
+  Atualização e Apresentação).
+
+### 14.5 O que não foi validado
+
+- Aplicação da v6 no Supabase de produção (proibida nesta entrega).
+- RLS por identidade real: a autenticação continua client-side, como na v5.
+- Testes autenticados com múltiplos usuários, concorrência entre navegadores,
+  acessibilidade e responsividade.
+- Restauração integral de um backup de produção no Supabase real.
+- Compatibilidade cross-browser e `FileReader` em navegadores antigos.
+
+### 14.6 Implantação local/homologação
+
+1. Parta de banco local/homologação com v5 aplicada.
+2. Execute `dls_migration_v6_conclusao_impugnacao.sql` inteiro; confira os
+   `NOTICE` de normalização de tipos.
+3. Abra o app, confirme a detecção da v6 e importe um backup v5 validado.
+4. Verifique conclusões, impugnações, relatórios, XLSX e impressão.
+5. Só promova para produção com backup, janela e autorização expressa.
+
+### 14.7 Resultado do E2E local
+
+O harness local usa PGlite em memória, uma fachada REST compatível com o
+subconjunto PostgREST usado pelo app e backups locais. Ele não lê nem escreve
+no Supabase. O E2E cobre login, dashboard com granularidade, importação de
+backup v5 e v6, relatórios, exportações, impressão, reabertura e restauração de
+datas.
+
+Resultados reproduzidos:
+
+- backup v5 completo: **871 demandas, 752 entregas, 812 reclamantes, 871
+  cálculos/equipe**, zero entrega sem data e zero conclusão inferida;
+- recorte v6 importado duas vezes: **18 demandas, 12 entregues, 2 versões de
+  conclusão, 1 item de impugnação**, sem falhas e com datas/status exatos;
+- backup v6 completo importado após o recorte e depois reimportado sobre as 871
+  demandas: **871/753/812/871, 2 versões, 1 item**, zero data ausente, **0
+  divergências** em `compare-import.js` e **0 falhas** capturadas em
+  `window.__importErrors` nas duas cargas completas;
+- exportação de backup v6 revalidada por `validateBackupPayload`: **871
+  demandas, 753 entregues, 2 conclusões, 1 item, versão 3, `valid: true`**;
+- XLSX com as 13 abas e fuso `America/Sao_Paulo`, sem total financeiro de
+  impugnação; aba `Demandas` com 871 linhas, `Conclusoes` com 754 e
+  `Impugnacao` com 1; CSV com 871 demandas e `Prazo` em `dd/mm/aaaa`;
+- impressão de `DLS-2026-1099` contendo as duas versões, motivo de reabertura,
+  item e diferença assinada/absoluta (`-250,00` / `250,00`);
+- relatório de todo o período com 754 versões (752 legado + 2 v6), SLA de 53%
+  (448 no prazo, 305 após o prazo e 95 em atraso aberto na amostra de 848), sem
+  duplicação de demandas coletivas ou total financeiro de impugnação.
+
+Na primeira tentativa de carga integral, em 11/11, dois erros por demanda foram
+registrados no console, mas o estado final já era idêntico ao backup. Em 13/11 a
+sequência foi repetida do zero com captura de `window.__importErrors` e de
+`console.error`: recorte, carga integral e reimportação integral terminaram sem
+erros. O evento não foi reproduzido nem exigiu alteração de código; fica
+registrado como observação de robustez do harness local, não como divergência de
+dados.
+
+O harness é temporário e não faz parte do deploy. A execução integral foi feita
+no mesmo harness; o recorte de 18 demandas serviu apenas para exercitar primeiro
+o caminho de upsert antes da carga completa.
+
+### 14.8 Correções encontradas durante o E2E
+
+1. **`JSON null` x `SQL NULL` na fachada local.** A RPC de restauração recebia
+   `'null'::jsonb` em vez de `NULL` e rejeitava a preservação de conclusões.
+   Corrigido apenas no harness local; o PostgREST real já converte esse valor.
+2. **Upsert de demanda entregue bloqueado pelo gatilho v6.** O `BEFORE INSERT`
+   disparava antes da resolução do `ON CONFLICT` e impedia salvar uma demanda
+   já entregue. A migração agora permite o upsert apenas quando a linha existe;
+   inserir demanda nova com status `entregue` continua proibido. Coberto por
+   PGlite e pelos testes estáticos.
+3. **SLA exibia apenas parte da amostra.** O detalhe mostrava concluídas no prazo
+   e após o prazo, mas omitia as abertas em atraso usadas no denominador. O
+   dashboard e o relatório agora exibem a amostra completa.
+4. **`Prazo` do CSV saía em ISO.** O CSV passou a normalizar o prazo para
+   `dd/mm/aaaa`, como as demais datas.
+
+
+### 14.9 Rollback v6
+
+A v6 é aditiva e não remove estruturas v5. Para desligar a funcionalidade,
+restaure o frontend anterior; as tabelas v6 podem permanecer sem uso. Não apague
+conclusões/itens sem exportar o histórico. Em caso de incidente, bloqueie
+escritas, exporte o estado, restaure o snapshot e reaplique a v6 corrigida após
+novo ensaio local/homologação.
+
+## 15. Complemento pós-v3.0 — alerta crítico operacional
+
+> **Estado em 13/11/2026:** implementado e validado **somente no ambiente local**.
+> Não requer migração, tabela, RPC ou alteração no Supabase. Nenhuma escrita em
+> produção foi realizada.
+
+### 15.1 Regra funcional
+
+- **Convocação de reunião:** quando o perfil logado é participante de uma reunião
+  futura ou em andamento e ainda não dispensou aquela convocação, o sistema exibe
+  um alerta consolidado em tela cheia. A assinatura é
+  `id | dataHora | título`; uma nova reunião, ou uma alteração de data/título,
+  gera nova convocação. Reuniões encerradas não alertam.
+- **Demanda atrasada:** o perfil logado é associado a um cadastro de calculista
+  por `calculista_id`/`calculistaId` explícito, e-mail, nome normalizado ou login,
+  sempre exigindo correspondência única. São consideradas demandas não
+  entregues/canceladas, com status `atrasada` ou prazo anterior à data
+  operacional em `America/Sao_Paulo`, das quais o calculista é responsável direto
+  ou membro ativo da equipe.
+- **Fechamento exclusivo pelo X:** o overlay não fecha por clique no fundo,
+  `Escape`, `Tab`, timeout ou qualquer botão interno. O foco é conduzido ao X e a
+  rolagem do sistema fica bloqueada enquanto o alerta estiver aberto.
+- **Dispensa e repetição:** ao clicar no X, a reunião e a assinatura do conjunto
+  de demandas são gravadas por usuário em `localStorage`
+  (`DLS_CRITICAL_ALERTS_<userId>`). Demandas atrasadas voltam a alertar quando o
+  conjunto de IDs muda ou em novo dia operacional; reuniões já dispensadas não se
+  repetem.
+- **Gatilhos de verificação:** login/`startApp`, atualização manual, auto-refresh
+  de 90 segundos e salvamento de reunião. Não há push em tempo real; um convidado
+  já logado recebe o alerta na próxima sincronização.
+
+### 15.2 Implementação
+
+- `index.html`: overlay `criticalAlertOverlay` com `role="alertdialog"`,
+  `z-index: 30000`, faixa de emergência, ícone pulsante, cartão rolável e um único
+  botão `X`; CSS responsivo e respeito a `prefers-reduced-motion`.
+- `dls_demandas_coletivas.js`: funções puras `resolveCalculistaForProfile`,
+  `meetingAlertKey`, `pendingMeetingInvites` e
+  `overdueDemandsForCalculista`, cobertas por testes de domínio.
+- A verificação usa `DB.getAllReunioes()` e `DB.getAllDemandas()` para não
+  depender do recorte de visibilidade da tela. O perfil é resolvido contra
+  `DB.getCalculistas()`; quando não há correspondência única, nenhuma demanda é
+  inventada.
+- Não há alteração no schema, nas RPCs, nos backups, na importação ou nas regras
+  financeiras de impugnação.
+
+### 15.3 Validações executadas
+
+- `domain.test.js` **27/27**: resolução por vínculo/e-mail/nome/login,
+  ambiguidade, demandas vencidas por responsável/equipe ativa e convocações
+  futuras/em andamento, encerradas e já vistas.
+- `client.test.js` **19/19**: overlay existe, `z-index: 30000`, apenas um botão
+  (X), `Escape` não fecha, chamadas nos gatilhos de login/refresh/salvamento e
+  persistência da dispensa.
+- Suíte completa: **73/73** testes estáticos; PGlite v6 permaneceu **29/29**;
+  JavaScript inline **0 erros de sintaxe**.
+- Validação manual no navegador local: alerta combinado com **1 reunião e 17
+  demandas atrasadas** para o perfil de teste; `Escape`, clique no fundo e clique
+  no cartão mantiveram o alerta aberto; o X fechou; a nova verificação não
+  reabriu; uma nova reunião reabriu; o texto livre foi escapado corretamente.
+- O fluxo real de **salvar reunião** foi exercitado com o admin como participante:
+  a reunião foi persistida, o modal fechou e o alerta abriu imediatamente; após o
+  X, a reunião de teste foi removida e o estado local limpo. Os atalhos do sistema
+  (`Ctrl+N`) ficaram bloqueados enquanto o overlay estava aberto e o foco foi
+  conduzido ao X.
+
+### 15.4 Limitações e rollback
+
+- O estado de "já visto" é local ao navegador. Outro navegador/dispositivo do
+  mesmo usuário verá a convocação novamente; não há sincronização multi-dispositivo.
+- A detecção é por sincronização periódica, não por push/realtime. Para notificação
+  imediata em outra sessão seria necessária uma tabela de notificações com RLS e
+  RPC/realtime, deliberadamente fora desta entrega.
+- A responsabilidade por equipe considera apenas vínculos ativos; a
+  correspondência de perfil para calculista exige unicidade e pode não existir em
+  bases sem e-mail/nome coincidente. Nesse caso, o alerta de reunião continua
+  funcionando, mas o de demanda atrasada não é emitido.
+- Rollback: basta restaurar o frontend anterior (`index.html` e
+  `dls_demandas_coletivas.js`) e as suítes de teste correspondentes. Não há
+  estrutura de banco a remover nem dados de produção a limpar.
+
+## 16. Auditoria final de datas, perfis e visibilidade
+
+> **Estado em 17/11/2026:** auditoria local concluída. A produção continua na
+> v5; nenhuma migração, escrita, alteração de RLS ou substituição de dados foi
+> executada no Supabase de produção. O aviso “Conclusão classificada ainda não
+> habilitada” permanece visível em produção por falta da estrutura v6.
+
+### 16.1 Datas e horários
+
+- Datas sem hora (`data_requisicao`, `prazo`, filtros e nomes de arquivo) são
+  datas civis: não passam por conversão UTC e não deslocam um dia.
+- `timestamp without time zone` do banco é lido como instante UTC, consistente
+  com `now()` e com `datetimeIn`. Valores de formulários `datetime-local` são
+  horário de parede em `America/Sao_Paulo` e são convertidos para UTC antes da
+  gravação.
+- Históricos e comentários antigos sem offset são interpretados como horário de
+  parede de São Paulo, não como UTC.
+- Os nomes de exportação/backup (`producao_calculos_*`, `relatorio_dls_*` e
+  `backup_dls_*`) usam `hojeLocal()`, não a data UTC do navegador.
+- Os helpers centrais (`dateOnly`, `todayIso`, `formatDateBR`, `formatTimeBR`,
+  `formatDateTimeBR`, `toSaoPauloInput`, `fromSaoPauloInput`, `parseInstant` e
+  `isoAddDays`) estão cobertos por testes de domínio e cliente. O SQL de
+  produtividade usa `America/Sao_Paulo` e o schema base não usa mais
+  `CURRENT_DATE` dependente do fuso do servidor.
+
+### 16.2 Perfis e segredos
+
+- `AUTH.getProfiles()` e `AUTH.loadProfile()` usam `profileSelect()` com uma
+  projeção explícita de colunas públicas. `password_hash` e `password_salt` são
+  solicitados apenas em `findByLogin()` e no fluxo interno de criação do
+  primeiro administrador.
+- `normalizeProfile()` continua removendo os segredos como defesa adicional;
+  a diferença é que eles não chegam mais ao navegador na lista ou na sessão.
+- A projeção foi conferida em modo somente leitura contra a produção com
+  `select=id,login,email,nome,role,permissions,active,created_at,updated_at&limit=0`;
+  a API respondeu HTTP 200 sem retornar linhas ou dados.
+- `renderCalculistas()` retorna antes de consultar/agregar dados quando o
+  perfil não possui `calculistas.view`, evitando renderizar uma página oculta
+  com métricas globais.
+
+### 16.3 Visibilidade de demandas
+
+- O usuário comum vê demandas cujo `responsavelId` corresponde ao calculista
+  resolvido do perfil, cujo id de perfil está permitido na demanda ou cujo
+  `allowedUserIds` contém o id do perfil.
+- Pertencer à equipe ou executar um cálculo **não concede acesso por
+  inferência**. A especificação exige separar usuários autorizados a acessar a
+  demanda de calculistas atribuídos ao trabalho; a decisão foi preservar essa
+  separação.
+- As chamadas de `DB.getAllDemandas()` restantes foram classificadas:
+  numeração, balanceamento de carga, exclusão administrativa, relatórios e
+  importação/backup restritos, e o alerta crítico. O alerta usa a base completa
+  apenas para detectar atrasos do calculista e não renderiza detalhes de
+  demandas fora do escopo. Nenhum caminho de lista, dashboard, relatório ou
+  exportação de usuário comum ficou usando a base completa.
+
+### 16.4 Validação final
+
+- Suíte estática: **77/77** (27 domínio, 17 SQL, 10 v6, 23 cliente).
+- PGlite v6: **29/29**, incluindo migração dupla, snapshots, impugnação,
+  restauração v5/v6, bloqueio de escrita direta e limpeza transacional.
+- JavaScript inline: **0 erros de sintaxe**.
+- O E2E completo de 871 demandas (753 entregues, 812 reclamantes, 871
+  cálculos/equipe, 2 conclusões e 1 item) já havia terminado com **0
+  divergências** e **0 falhas** contra o backup. Ele não foi reexecutado após
+  os últimos ajustes de projeção de perfil e nomes de arquivo; esses ajustes
+  são cobertos pela suíte estática e a projeção foi confirmada contra as
+  colunas reais de produção. O servidor PGlite é em memória e perde os dados
+  quando reiniciado.
+- O exemplo `DLS-2026-1099` renderizou “Impugnação vigente versão 2” e o
+  snapshot congelado sem o aviso de conclusão não habilitada no ambiente local
+  com v6.
+
+### 16.5 Pendências e limites
+
+- **Produção:** a v6 não será aplicada sem autorização explícita, backup
+  validado e janela de manutenção. Enquanto isso, o aviso de conclusão é o
+  comportamento esperado da v5.
+- **E2E:** repetir a carga completa em ambiente local/homologação depois de
+  qualquer nova alteração de frontend ou SQL.
+- **Segurança:** a autenticação continua client-side, sem Supabase Auth/JWT por
+  usuário; a segregação é aplicada por `AUTH`/`DB` no navegador. Testes reais de
+  RLS por identidade, concorrência multi-usuário, acessibilidade,
+  responsividade e múltiplos navegadores continuam pendentes.
+- **Notificações:** a dispensa do alerta crítico é local ao navegador; não há
+  sincronização multi-dispositivo nem push/realtime.
+
+## 17. Identidade visual DLS e padronização das exportações Excel (18/11/2026)
+
+### 17.1 Logotipo
+
+- O logotipo oficial fornecido foi otimizado em dois arquivos:
+  `assets/dls-logo.jpg` (700×550, 39.062 bytes) para o logo completo e
+  `assets/dls-logo-mark.png` (260×261, 16.280 bytes) para a marca compacta.
+- Os dois arquivos também foram embutidos em `index.html` como data URI
+  (`DLS_BRAND_B64`/`DLS_BRAND`), evitando dependência de rewrite ou de caminho
+  estático no Vercel. `applyBrandAssets()` é chamado no boot e preenche todos os
+  elementos `data-dls-logo`.
+- O logo completo aparece no login, na configuração inicial, no cabeçalho de
+  impressão dos relatórios e no histórico impresso da demanda. A marca compacta
+  aparece na sidebar, no cabeçalho global, no favicon, ao lado do título de
+  Relatórios e no cabeçalho de cada aba do Excel.
+- A aba Relatórios ganhou o botão **Imprimir**. A impressão usa
+  `window.print()` com a classe temporária `body.dls-printing-report`, CSS
+  `@media print`, cabeçalho completo com empresa, data/hora de geração e período,
+  ocultação de filtros/ações/sidebar e restauração da classe no evento
+  `afterprint`.
+
+### 17.2 Padrão único dos Excel
+
+- `DLS_XLSX` centraliza o padrão: título, “Gerado em”, “Período”, fuso
+  `America/Sao_Paulo`, linha em branco, cabeçalho azul, zebrado, autofiltro,
+  larguras de coluna e imagem do logo no topo de cada aba.
+- `DLS_EXPORT_HEADERS` e os helpers `dlsExportDemandaRows()` /
+  `dlsExportCalculoRows()` são compartilhados entre a aba Relatórios e os
+  botões de exportação, evitando divergência de colunas ou de tabulação.
+- `exportarRelatorio()` usa o mesmo construtor; `exportarDemandas()` e
+  `exportarProducaoCalculos()` deixaram de gerar CSV e passaram a gerar `.xlsx`.
+  `exportarDemandas()` inclui `Resumo`, `Demandas`, `Reclamantes`, `Equipe` e
+  `Calculos`; a produção inclui `Resumo` e `Calculos`. A exportação de demandas
+  reutiliza `dlsFilterDemandasList()`, a mesma função de filtros da tabela
+  (status, cliente, calculista, reclamante, prazo e busca), e a ordenação atual.
+- Após o `xlsx-js-style` montar o livro, o ExcelJS 4.4.0 (CDN) carrega o buffer,
+  insere a marca DLS em cada worksheet e regrava o arquivo. Se o ExcelJS não
+  estiver disponível, o arquivo é gerado sem imagem e um aviso é registrado no
+  console; a exportação não é bloqueada.
+- O backup JSON não foi alterado por esse padrão.
+
+### 17.3 Validação executada
+
+- Suíte estática: **77/77** (27 domínio, 17 SQL, 10 v6, 23 cliente).
+- O JavaScript inline foi extraído e validado com `new Function`: **0 erros de
+  sintaxe**.
+- E2E local de permissões em 21/11/2026: um perfil comum (`user`) recebeu as
+  permissões padrão `calculos.concluir` e `demandas.entregar`, concluiu o
+  cálculo aberto de `DLS-1100` e entregou a demanda como Concordância. A
+  conclusão foi gravada com `registrado_por = "Usuario Teste"` e data em
+  `America/Sao_Paulo`; os dados de teste foram removidos ao final e o recorte
+  local voltou a 18 demandas, 2 conclusões e 1 item de impugnação.
+- E2E local de status em 23/11/2026: o mesmo perfil comum alterou `DLS-1101` de
+  **Atrasada** para **Em andamento** pelo modal de edição (botão “Salvar Status”)
+  e devolveu para **Atrasada** pelo select inline da tabela. As duas transições
+  gravaram histórico com o autor correto; a entrega por select no detalhe também
+  abriu a classificação v6 e foi concluída como Concordância. Uma demanda já
+  entregue manteve o status bloqueado para reabertura pelo perfil comum. Os
+  dados de teste foram removidos e o recorte voltou a 18 demandas, 2 conclusões
+  e 1 item de impugnação.
+- Smoke local autenticado em 18/11/2026 com 12 demandas: login, logo na sidebar
+  e no cabeçalho, impressão do relatório, exportação do relatório (13 abas),
+  exportação de demandas (5 abas) e exportação de produção (2 abas).
+- Nos três arquivos, todas as abas continham 1 imagem, título com fonte 16,
+  merges e autofiltro preservados após o pós-processamento; o console não
+  registrou erros nem avisos.
+- O E2E completo de 871 demandas não foi reexecutado após esta alteração; o
+  smoke test usou a carga local menor e não substitui a validação de volume.
+
+### 17.4 Diagnóstico da v6 e perfis de usuário (19/11/2026)
+
+- A produção continua na v5: as tabelas `dls_demanda_conclusoes` e
+  `dls_demanda_impugnacao_itens` não existem no PostgREST de produção. O aviso
+  de conclusão indisponível é, portanto, correto e não é causado pelo perfil do
+  usuário.
+- O diagnóstico técnico com o nome do arquivo SQL passou a ser exibido somente
+  para administradores (`AUTH.isAdmin()` ou `settings.manage`). Usuários comuns
+  não veem SQL/RLS; no máximo recebem uma mensagem operacional de indisponibilidade.
+- A habilitação exige executar `dls_migration_v6_conclusao_impugnacao.sql` no
+  SQL Editor do Supabase ou por conexão administrativa. A chave `anon` do
+  frontend não executa DDL.
+- O roteiro de backup, execução, validação e recarga do schema está no
+  `README.md`, seção “Habilitar a v6 em produção”.
+
+### 17.5 Correção de desempenho das exportações em escala de produção (24/11/2026)
+
+- Diagnóstico: `dlsExportCalcName()` e `dlsExportClienteName()` chamavam
+  `DB.getCalculistas()`/`DB.getClientes()` por célula. `DB.getCalculistas()`
+  recalcula métricas e clona todas as demandas; com a base de produção, cada
+  exportação fazia milhares de recálculos e travava a aba (o teste com 1.000
+  demandas não concluía em 60 s).
+- Correção: `dlsExportLookup()` monta uma única vez os mapas de nomes e o
+  contexto de domínio/dados relacionados; `dlsExportDemandaRows()` e
+  `dlsExportCalculoRows()` recebem esse contexto. Os fallbacks usam
+  `DB.get(DB.KEY_CALCULISTAS)`/`DB.get(DB.KEY_CLIENTES)`, sem recalcular
+  métricas. `calcNome()` e `clienteNome()` também usam cache invalidado pela
+  identidade do cache do DB. O padrão `DLS_XLSX`, o logo e as regras v5/v6 foram
+  preservados.
+- Validação local com a carga real somente leitura de produção: 1.416 demandas,
+  811 reclamantes, 869 cálculos, 876 vínculos de equipe, 31 clientes e 13
+  calculistas. Exportações acionadas pela UI: relatório com 13 abas (~9,1 s,
+  430.505 bytes), demandas com 5 abas (~3,9 s, 312.426 bytes) e produção com 2
+  abas (~1,3 s, 104.758 bytes); sem erros de console e com 1 imagem por aba.
+- Validação local v6 com 18 demandas, 2 conclusões e 1 item de impugnação:
+  relatório com 13 abas (~0,9 s, 63.423 bytes), demandas com 5 abas (~0,2 s,
+  38.907 bytes) e produção com 2 abas (~0,1 s, 28.689 bytes); console sem erros.
+- Suíte estática: **77/77**, incluindo novo teste que impede a regressão de
+  `DB.getCalculistas()` por linha na exportação. O JavaScript inline foi
+  validado com `new Function`.
+- Nenhuma escrita, migração ou deploy em produção foi realizado.

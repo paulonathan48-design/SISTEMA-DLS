@@ -94,20 +94,25 @@ BEGIN
           BEGIN
             IF dtxt ~ '^\d{2}/\d{2}/\d{4}, \d{2}:\d{2}(:\d{2})?$' THEN
               BEGIN
-                ts := to_timestamp(dtxt, 'DD/MM/YYYY, HH24:MI:SS');
+                ts := (to_timestamp(dtxt, 'DD/MM/YYYY, HH24:MI:SS')::timestamp AT TIME ZONE 'America/Sao_Paulo');
               EXCEPTION WHEN OTHERS THEN
-                BEGIN ts := to_timestamp(dtxt, 'DD/MM/YYYY, HH24:MI');
+                BEGIN ts := (to_timestamp(dtxt, 'DD/MM/YYYY, HH24:MI')::timestamp AT TIME ZONE 'America/Sao_Paulo');
                 EXCEPTION WHEN OTHERS THEN ts := NULL; END;
               END;
             ELSIF dtxt ~ '^\d{2}/\d{2}/\d{4} \d{2}:\d{2}(:\d{2})?$' THEN
               BEGIN
-                ts := to_timestamp(dtxt, 'DD/MM/YYYY HH24:MI:SS');
+                ts := (to_timestamp(dtxt, 'DD/MM/YYYY HH24:MI:SS')::timestamp AT TIME ZONE 'America/Sao_Paulo');
               EXCEPTION WHEN OTHERS THEN
-                BEGIN ts := to_timestamp(dtxt, 'DD/MM/YYYY HH24:MI');
+                BEGIN ts := (to_timestamp(dtxt, 'DD/MM/YYYY HH24:MI')::timestamp AT TIME ZONE 'America/Sao_Paulo');
                 EXCEPTION WHEN OTHERS THEN ts := NULL; END;
               END;
-            ELSE
+            ELSIF dtxt ~ '(Z|[+-]\d{2}:?\d{2})$' THEN
               BEGIN ts := dtxt::timestamptz;
+              EXCEPTION WHEN OTHERS THEN ts := NULL; END;
+            ELSE
+              -- Histórico legado é horário de parede de Brasília. Interpretar
+              -- como UTC deslocaria a conclusão em três horas.
+              BEGIN ts := (dtxt::timestamp AT TIME ZONE 'America/Sao_Paulo');
               EXCEPTION WHEN OTHERS THEN ts := NULL; END;
             END IF;
           EXCEPTION WHEN OTHERS THEN
@@ -131,7 +136,7 @@ $$;
 -- ativas     = COUNT(status NOT IN ('entregue','cancelada')) — inclui atrasada
 -- sla        = 100 * entregues_no_prazo / entregues_elegíveis
 --   elegível: entregue + prazo NOT NULL + concluida_em NOT NULL
---   no prazo: concluida_em::date <= prazo
+--   no prazo: (concluida_em AT TIME ZONE 'America/Sao_Paulo')::date <= prazo
 --   sem elegível -> NULL (frontend exibe "—", nunca 95 mockado)
 -- Mesmo formato de objeto esperado pelo frontend (mesmos nomes).
 -- ------------------------------------------------------------
@@ -161,7 +166,7 @@ SELECT
                 d.status = 'entregue'
                 AND d.prazo IS NOT NULL
                 AND d.concluida_em IS NOT NULL
-                AND d.concluida_em::date <= d.prazo
+                AND (d.concluida_em AT TIME ZONE 'America/Sao_Paulo')::date <= d.prazo
         )
         /
         NULLIF(
@@ -231,7 +236,7 @@ COMMIT;
 --   ) AS elegiveis,
 --   COUNT(d.id) FILTER (
 --     WHERE d.status='entregue' AND d.prazo IS NOT NULL AND d.concluida_em IS NOT NULL
---       AND d.concluida_em::date <= d.prazo
+--       AND (d.concluida_em AT TIME ZONE 'America/Sao_Paulo')::date <= d.prazo
 --   ) AS no_prazo
 -- FROM public.dls_calculistas c
 -- LEFT JOIN public.dls_demandas d ON d.responsavel_id = c.id
