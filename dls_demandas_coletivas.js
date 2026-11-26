@@ -83,10 +83,16 @@
 
   const SAO_PAULO_TIME_ZONE = 'America/Sao_Paulo';
 
-  function _saoPauloParts(dt) {
-    if (!dt || Number.isNaN(dt.getTime())) return null;
+  // Criar um Intl.DateTimeFormat e caro. Em exportacoes grandes esta funcao e
+  // chamada milhares de vezes, entao o formatador e criado uma unica vez e
+  // reutilizado. formatToParts e seguro para chamadas repetidas.
+  let saoPauloFormatter = null;
+  let saoPauloFormatterUnavailable = false;
+
+  function getSaoPauloFormatter() {
+    if (saoPauloFormatter || saoPauloFormatterUnavailable) return saoPauloFormatter;
     try {
-      const parts = new Intl.DateTimeFormat('en-CA', {
+      saoPauloFormatter = new Intl.DateTimeFormat('en-CA', {
         timeZone: SAO_PAULO_TIME_ZONE,
         year: 'numeric',
         month: '2-digit',
@@ -95,29 +101,46 @@
         minute: '2-digit',
         second: '2-digit',
         hourCycle: 'h23'
-      }).formatToParts(dt);
-      const valueOf = type => (parts.find(p => p.type === type) || {}).value || '';
-      const year = Number(valueOf('year'));
-      const month = Number(valueOf('month'));
-      const day = Number(valueOf('day'));
-      const hour = Number(valueOf('hour'));
-      const minute = Number(valueOf('minute'));
-      const second = Number(valueOf('second'));
-      if (![year, month, day, hour, minute, second].every(Number.isFinite)) return null;
-      return { year, month, day, hour, minute, second };
+      });
     } catch (err) {
-      // Ambientes sem Intl: o Brasil não possui horário de verão desde 2019.
-      // O fallback fixo em UTC-3 preserva o dia civil na maior parte dos casos.
-      const shifted = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
-      return {
-        year: shifted.getUTCFullYear(),
-        month: shifted.getUTCMonth() + 1,
-        day: shifted.getUTCDate(),
-        hour: shifted.getUTCHours(),
-        minute: shifted.getUTCMinutes(),
-        second: shifted.getUTCSeconds()
-      };
+      saoPauloFormatterUnavailable = true;
     }
+    return saoPauloFormatter;
+  }
+
+  function _saoPauloParts(dt) {
+    if (!dt || Number.isNaN(dt.getTime())) return null;
+    const formatter = getSaoPauloFormatter();
+    if (formatter) {
+      try {
+        const parts = formatter.formatToParts(dt);
+        const values = {};
+        for (const part of parts) {
+          if (part.type !== 'literal') values[part.type] = part.value;
+        }
+        const year = Number(values.year);
+        const month = Number(values.month);
+        const day = Number(values.day);
+        const hour = Number(values.hour);
+        const minute = Number(values.minute);
+        const second = Number(values.second);
+        if (![year, month, day, hour, minute, second].every(Number.isFinite)) return null;
+        return { year, month, day, hour, minute, second };
+      } catch (err) {
+        // Cai no fallback abaixo se o formatador falhar para este valor.
+      }
+    }
+    // Ambientes sem Intl: o Brasil nao possui horario de verao desde 2019.
+    // O fallback fixo em UTC-3 preserva o dia civil na maior parte dos casos.
+    const shifted = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
+    return {
+      year: shifted.getUTCFullYear(),
+      month: shifted.getUTCMonth() + 1,
+      day: shifted.getUTCDate(),
+      hour: shifted.getUTCHours(),
+      minute: shifted.getUTCMinutes(),
+      second: shifted.getUTCSeconds()
+    };
   }
 
   function saoPauloParts(value) {

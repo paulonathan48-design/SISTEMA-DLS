@@ -182,6 +182,30 @@ test('crédito só existe em cálculo entregue com calculista e data', () => {
   assert.equal(domain.isoAddDays('2028-02-28', 1), '2028-02-29');
 });
 
+test('formatador de America/Sao_Paulo é criado uma única vez e reutilizado', () => {
+  const modulePath = require.resolve('../dls_demandas_coletivas.js');
+  const originalIntl = Intl.DateTimeFormat;
+  const originalCache = require.cache[modulePath];
+  let constructed = 0;
+  Intl.DateTimeFormat = function (...args) {
+    constructed += 1;
+    return new originalIntl(...args);
+  };
+  delete require.cache[modulePath];
+  try {
+    const fresh = require('../dls_demandas_coletivas.js');
+    for (let i = 0; i < 25; i += 1) {
+      const parts = fresh.saoPauloParts(new Date(Date.UTC(2026, 0, 1, 12, 0, 0)));
+      assert.equal(parts.hour, 9);
+    }
+    assert.equal(constructed, 1);
+  } finally {
+    Intl.DateTimeFormat = originalIntl;
+    delete require.cache[modulePath];
+    if (originalCache) require.cache[modulePath] = originalCache;
+  }
+});
+
 test('freezeConclusion é idempotente e bloqueia troca silenciosa de crédito', () => {
   const calculo = { id: 'CLC-1', status: 'andamento', calculistaExecutorId: 'CALC-1' };
   const congelado = domain.freezeConclusion(calculo, 'CALC-1', '2026-10-01T12:00:00Z');
