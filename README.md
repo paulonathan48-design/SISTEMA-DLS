@@ -12,14 +12,53 @@ da **v6 — conclusão classificada e impugnação**, conforme as especificaçõ
 **alerta crítico operacional** para convocações de reunião e demandas atrasadas,
 sem migração de banco.
 
-> **Estado da v6 (17/11/2026):** implementada e validada somente no ambiente
-> local (frontend + PGlite/PostgreSQL local). A v6 **não foi aplicada** no
-> Supabase de produção; a produção permanece na v5 e continua exibindo o aviso
-> de conclusão ainda não habilitada. Nenhuma escrita, migração ou alteração de
-> RLS foi feita em produção; a verificação final de colunas de perfil foi apenas
-> leitura (`limit=0`).
+> **Estado da v6 (25/11/2026):** v5 reaplicada, reconciliação do legado e v6
+> aplicadas no Supabase de produção em uma única transação. O frontend v5/v6
+> está publicado em `https://sistema-dls.vercel.app` e a produção já registra
+> conclusões e itens de impugnação v6. A contagem de fechamento do smoke test é
+> **1.415 demandas, 1.346 reclamantes, 1.415 cálculos, 1.422 vínculos de equipe
+> e 14 perfis reais**. Uma demanda (`DLS-2026-1698`) foi excluída por um
+> administrador durante a janela; a diferença de uma demanda em relação ao
+> backup pré-migração é essa exclusão, não perda da migração.
 
-## Status de produção (04/11/2026)
+## Status de produção (25/11/2026)
+
+- **Migração:** v5 idempotente + reconciliação + v6 executadas no SQL Editor do
+  Supabase em uma transação. O schema cache foi recarregado; as tabelas v6 e as
+  RPCs existem e as duas tabelas novas têm RLS habilitado com uma política cada.
+- **Frontend:** deploy de `57430ab` na Vercel; o domínio
+  `https://sistema-dls.vercel.app` serve a versão v5/v6. O commit inclui a
+  reutilização do formatador `Intl` que reduziu o relatório completo de ~11–14 s
+  para ~4,2 s.
+- **Linha de base no momento da migração:** 1.416 demandas, 1.347 reclamantes,
+  1.416 cálculos e 1.423 vínculos; zero demanda sem filhos, zero cálculo aberto
+  em demanda entregue, zero `bulk_pendentes`, zero cálculo entregue sem crédito
+  e zero demanda com mais de um principal ativo.
+- **Reconciliação:** 103 demandas entregues com cálculo legado aberto foram
+  corrigidas (98 no caminho em massa + 5 direcionadas); 9 demandas receberam
+  tratamento específico e 5 delas também têm o marcador em massa. 498 linhas de
+  demanda e 495 de cálculo foram normalizadas para `Cálculo Cível`.
+- **Uso real da v6:** após o deploy, usuários reais já criaram 32 conclusões
+  (incluindo impugnações) e 18 itens de impugnação. O fluxo de conclusão e o
+  histórico versionado estão operando em produção.
+- **Smoke de exportação:** com 1.415 demandas, `Exportar Excel` (demandas) gerou
+  391.963 bytes em ~2,5 s; `Exportar cálculos` gerou 153.000 bytes em ~0,8 s; o
+  relatório completo gerou 533.116 bytes em ~4,2 s, com 13 abas, logo DLS em
+  todas as abas e sem erros de console.
+- **Limpeza:** os perfis temporários `smoke.admin` e `smoke.user` foram
+  removidos; restaram os 14 perfis reais.
+- **Backup e script:** snapshot data-only via REST antes da migração, com cópia
+  durável e hashes em
+  `C:\Users\paulo\Downloads\DLS-backups\prod-backup-2026-11-25T11-21-19-373Z`;
+  o script combinado aplicado está na mesma pasta
+  (`prod-v5-backfill-reconcile-v6.applied.sql`). O snapshot tem 1.416 demandas,
+  3.352 logs, 811 reclamantes, 869 cálculos, 876 vínculos e 14 perfis. Não foi
+  criado um `pg_dump` completo nesta janela; o schema v5/v6 é aditivo e o script
+  aplicado é transacional.
+- **Detalhamento:** a sequência completa, a reconciliação e os resultados do
+  smoke estão na seção 18 de `IMPLEMENTACAO_DEMANDAS_COLETIVAS.md`.
+
+### Histórico do rollout v5 (04/11/2026)
 
 - Migração v5 aplicada no Supabase de produção, schema cache do PostgREST
   recarregado e v5 reaplicada após o deploy para cobrir a janela de transição.
@@ -36,13 +75,6 @@ sem migração de banco.
 - Snapshot pré-migração preservado no próprio banco no schema
   `dls_backup_v5_20261104` (871 demandas), além do backup anterior de 843
   demandas.
-- Em 19/11/2026 a produção continua na v5 e sem as tabelas
-  `dls_demanda_conclusoes`/`dls_demanda_impugnacao_itens`; por isso a conclusão
-  classificada permanece indisponível. O aviso técnico com o nome do arquivo SQL
-  agora aparece **somente para administradores**; usuários comuns recebem, no
-  máximo, uma mensagem operacional sem SQL/RLS. A habilitação exige executar
-  `dls_migration_v6_conclusao_impugnacao.sql` no SQL Editor do Supabase ou por
-  conexão administrativa; a chave `anon` do frontend não executa DDL.
 
 ## Arquivos principais
 
@@ -107,10 +139,12 @@ sem migração de banco.
   demandas ou cálculos. A exportação de demandas respeita os filtros ativos da
   aba (status, cliente, calculista, reclamante, prazo e busca).
 - As exportações resolvem nomes de calculistas e clientes uma única vez por
-  arquivo; não recalculam métricas de calculistas por linha. Com a carga real de
-  produção (1.416 demandas, 811 reclamantes, 869 cálculos e 876 vínculos de
-  equipe), o relatório levou ~9 s, as demandas ~4 s e a produção de cálculos
-  ~1,3 s no teste local, sem erros de console e mantendo o logo em todas as abas.
+  arquivo; não recalculam métricas de calculistas por linha. O formatador de
+  fuso `America/Sao_Paulo` também é criado uma única vez e reutilizado. No smoke
+  de produção com **1.415 demandas, 1.346 reclamantes, 1.415 cálculos e 1.422
+  vínculos**, o relatório completo levou ~4,2 s (antes da otimização, ~11–14 s),
+  as demandas ~2,5 s e a produção de cálculos ~0,8 s, sem erros de console e
+  mantendo o logo em todas as abas.
 - Relatórios e exportações mantêm separados:
   - indicadores de **demandas** (regra legada por `dls_demandas`);
   - indicadores de **produção de cálculos** (uma linha por cálculo, crédito e
@@ -195,10 +229,11 @@ sem migração de banco.
 
 ## Ordem de implantação
 
-> O rollout de produção foi concluído em 04/11/2026. As instruções abaixo servem
-> para uma nova instalação ou para reaplicação; a v5 é transacional
-> (`begin`/`commit`) e idempotente. Não a execute em outro ambiente sem backup,
-> janela de manutenção e autorização expressa.
+> O rollout v5 foi concluído em 04/11/2026 e a v5 foi reaplicada junto com a v6
+> em 25/11/2026. As instruções abaixo servem para uma nova instalação ou para
+> reaplicação; a v5 é transacional (`begin`/`commit`) e idempotente. Não a
+> execute em outro ambiente sem backup, janela de manutenção e autorização
+> expressa.
 
 1. **Backup completo** do banco pelo painel do Supabase (schema + dados). Guarde
    o snapshot fora do projeto.
@@ -227,9 +262,11 @@ sem migração de banco.
    cálculo, gerar relatório, exportar e importar backup.
 8. Somente depois, repita a migração em produção com backup validado.
 
-## Implantação local/homologação da v6 (não executar em produção sem autorização)
+## Implantação da v6 (homologação e reaplicação em produção)
 
-A v6 é **aditiva** e deve ser executada depois da v5 já validada:
+A v6 é **aditiva** e deve ser executada depois da v5 já validada. Ela foi
+aplicada em produção em 25/11/2026; as etapas abaixo servem para homologação,
+auditoria ou reaplicação idempotente:
 
 1. Faça backup completo e valide o JSON com `validateBackupPayload`.
 2. Aplique `dls_migration_v6_conclusao_impugnacao.sql` inteiro em banco local
@@ -246,18 +283,19 @@ A v6 é **aditiva** e deve ser executada depois da v5 já validada:
    detectada` e importe um backup v5 validado. Verifique demandas entregues,
    conclusões e itens de impugnação.
 5. Execute os testes locais e o ensaio PGlite/PostgreSQL local antes de qualquer
-   promoção. A aplicação em produção exige backup, janela e autorização
-   explícita; **não foi executada nesta entrega**.
+   promoção. A v6 já foi aplicada em produção em 25/11/2026; uma reaplicação
+   exige backup, janela e autorização explícita.
 6. Valide o alerta crítico com um perfil associável a um calculista que tenha
    reunião futura e demanda atrasada: confirme que `Escape`, clique no fundo e
    timeout não fecham o overlay e que somente o X o dispensa. O estado de dispensa
    fica no navegador e não é sincronizado entre dispositivos.
 
-### Habilitar a v6 em produção
+### Reaplicar/verificar a v6 em produção (já aplicada em 25/11/2026)
 
-A produção continua na v5 e o aviso de conclusão é o comportamento esperado.
-A chave `anon` usada pelo frontend **não executa DDL**; a migração precisa ser
-rodada por uma conexão administrativa:
+A v6 já está aplicada e em uso na produção. O script é transacional e
+idempotente; uma reaplicação serve para auditoria ou recuperação. A chave `anon`
+usada pelo frontend **não executa DDL**; a migração precisa ser rodada por uma
+conexão administrativa:
 
 1. Faça e valide um backup completo.
 2. Abra o SQL Editor do Supabase de produção.
@@ -282,7 +320,7 @@ rodada por uma conexão administrativa:
 7. Se o PostgREST continuar retornando `PGRST205`, execute
    `notify pgrst, 'reload schema';` novamente e aguarde alguns segundos.
 
-Enquanto a migração não for aplicada, o aviso técnico fica restrito a
+Em ambientes onde a v6 ainda não foi aplicada, o aviso técnico fica restrito a
 administradores; usuários comuns não recebem a instrução de SQL na tela.
 
 ## Validação pós-migração
@@ -386,7 +424,7 @@ Se o PowerShell bloquear scripts `.ps1`, execute cada arquivo diretamente:
 `node tests/domain.test.js`, `node tests/sql.test.js`, `node tests/v6.test.js` e
 `node tests/client.test.js`.
 
-As suítes estáticas somam **76 testes**: 27 de domínio, 17 de SQL, 10 da v6 e 22
+As suítes estáticas somam **78 testes**: 28 de domínio, 17 de SQL, 10 da v6 e 23
 de cliente. O JavaScript inline também foi validado sem erro de sintaxe.
 
 A validação do JavaScript inline pode ser feita com o extrator/ESLint usado no
@@ -503,9 +541,9 @@ erros, sem principal ausente/duplicado. O arquivo e o SHA-256 estão na seção
 - As RPCs são `SECURITY INVOKER`; os grants para `anon`/`authenticated` são
   intencionais para manter o funcionamento atual. Não trate a anon key como
   segredo.
-- A migração v5 é aditiva e já foi ensaiada e aplicada em produção; a v6
-  permanece somente local. Para novas alterações, mantenha o ensaio em cópia de
-  homologação e o backup validado; não há rollback automático de dados.
+- As migrações v5 e v6 são aditivas e já foram ensaiadas e aplicadas em
+  produção. Para novas alterações, mantenha o ensaio em cópia de homologação e o
+  backup validado; não há rollback automático de dados.
 - A view e o frontend usam o fuso `America/Sao_Paulo` para agrupar a data de
   conclusão dos cálculos.
 - Datas sem hora são tratadas como datas civis e não passam por conversão UTC.
@@ -546,25 +584,27 @@ cálculo é protegida por FK `ON DELETE RESTRICT`.
 
 - **Falha durante a migração:** como todo o script está em uma única transação,
   não deve haver aplicação parcial. Corrija o erro e reexecute.
-- **Rollback apenas do frontend:** restaure a versão anterior de `index.html`
-  (antes do commit `e8750f1`). A versão antiga ignora as novas colunas e tabelas;
-  os dados v5 permanecem no banco para uma nova tentativa. Demandas cadastradas
-  pelo frontend antigo nesse intervalo não terão filhos v5; reexecute o backfill
-  antes de voltar ao frontend novo.
-- **Rollback completo do banco:** restaure o snapshot anterior à migração. Em
-  produção, o snapshot em banco está no schema `dls_backup_v5_20261104`; o backup
-  externo validado está em `C:\Users\paulo\Downloads\DLS-backups\`. Não remova
-  tabelas ou colunas manualmente sem backup e autorização, pois cálculos, créditos
-  e histórico podem ser perdidos.
+- **Rollback apenas do frontend:** restaure o deploy anterior `dd6ce7c` (v5/v6
+  sem a otimização de exportação) ou outro commit desejado. As tabelas v5/v6
+  permanecem e os dados não são apagados. Um frontend anterior à v6 não classifica
+  conclusões e pode gravar entregas diretas; use apenas em incidente controlado e
+  reaplique a v6 antes de reabrir o uso normal.
+- **Rollback completo do banco:** não há snapshot point-in-time completo desta
+  janela. O schema `dls_backup_v5_20261104` e o backup externo de 04/11 são
+  históricos e não contêm os dados posteriores; o snapshot data-only de 25/11
+  preserva os dados pré-v5, mas não as tabelas v6. Restaurar qualquer um deles
+  perde dados posteriores. Prefira correção para frente e faça um backup completo
+  antes de qualquer restore.
 - **Incidente pós-implantação:** bloqueie novas escritas na aplicação, exporte o
-  estado atual para análise, restaure o snapshot e reaplique a migração corrigida
+  estado atual para análise, preserve os logs e aplique uma correção idempotente
   em homologação antes de nova promoção.
 - **Rollback da v6:** a v6 é aditiva e não remove estruturas v5. Para desligar a
-  funcionalidade, restaure o frontend anterior; as tabelas de conclusão podem
-  permanecer sem uso. Não apague `dls_demanda_conclusoes` ou
+  funcionalidade, reverta o frontend; as tabelas de conclusão podem permanecer
+  sem uso. Não apague `dls_demanda_conclusoes` ou
   `dls_demanda_impugnacao_itens` sem exportar o histórico e obter autorização.
-  Se a v6 já tiver sido aplicada em produção, restaure o snapshot anterior e
-  reaplique a v6 corrigida somente após novo ensaio local/homologação.
+  Se houver defeito, corrija o frontend/migração e reaplique; um restore para o
+  estado anterior à v6 exige um snapshot completo que não foi capturado nesta
+  janela.
 
 ## Documentação de implementação
 

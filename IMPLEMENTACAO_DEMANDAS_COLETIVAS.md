@@ -1,11 +1,13 @@
 ﻿# Implementação — Demandas Coletivas v5
 
-**Status:** implementação concluída e **em produção desde 04/11/2026**. A v5 foi
-aplicada no Supabase `mttqsfawxnrotabjfiym`, o schema do PostgREST foi
-recarregado, o frontend foi publicado na Vercel (commit `e8750f1`) e o backfill
-foi reexecutado após o deploy. Não há staging Supabase separado; o ensaio foi
-feito em PostgreSQL 17.6 local com os dados reais e a validação final foi
-executada no próprio Supabase de produção.
+**Status:** implementação concluída. A v5 está em produção desde 04/11/2026 e
+foi reaplicada com a reconciliação do legado e a v6 em **25/11/2026**, no
+Supabase `mttqsfawxnrotabjfiym`. O schema do PostgREST foi recarregado, o
+frontend v5/v6 foi publicado na Vercel (commit `57430ab`) e a produção já
+registra conclusões/impugnações v6. Não há staging Supabase separado; o ensaio
+foi feito em PostgreSQL 17.6 local com dados reais e a validação final foi
+executada no próprio Supabase de produção. O detalhamento do rollout está na
+seção 18.
 
 Referência: `C:\Users\paulo\Downloads\DLS_Especificacao_Demandas_Coletivas_v2.md`.
 
@@ -745,9 +747,9 @@ Não há bundler, dependências de runtime adicionais ou build step.
 
 ## 14. Atualização v3.0 — conclusão classificada e impugnação (v6)
 
-> **Estado em 13/11/2026:** implementação e validação **somente local**. A v6
-> não foi aplicada no Supabase de produção. Nenhuma escrita foi feita em
-> produção durante esta entrega.
+> **Estado em 13/11/2026 (histórico):** implementação e validação local. A v6
+> foi aplicada no Supabase de produção em 25/11/2026; o resultado está na
+> seção 18. As referências abaixo preservam o registro da validação local.
 
 ### 14.1 Escopo v6
 
@@ -1160,10 +1162,10 @@ novo ensaio local/homologação.
 
 ### 17.4 Diagnóstico da v6 e perfis de usuário (19/11/2026)
 
-- A produção continua na v5: as tabelas `dls_demanda_conclusoes` e
-  `dls_demanda_impugnacao_itens` não existem no PostgREST de produção. O aviso
-  de conclusão indisponível é, portanto, correto e não é causado pelo perfil do
-  usuário.
+- **Diagnóstico histórico (19/11/2026):** naquele momento a produção estava na
+  v5 e as tabelas `dls_demanda_conclusoes`/`dls_demanda_impugnacao_itens` não
+  existiam. A v6 foi aplicada em 25/11/2026; as tabelas e RPCs existem e o
+  fluxo está em uso (seção 18).
 - O diagnóstico técnico com o nome do arquivo SQL passou a ser exibido somente
   para administradores (`AUTH.isAdmin()` ou `settings.manage`). Usuários comuns
   não veem SQL/RLS; no máximo recebem uma mensagem operacional de indisponibilidade.
@@ -1171,7 +1173,7 @@ novo ensaio local/homologação.
   SQL Editor do Supabase ou por conexão administrativa. A chave `anon` do
   frontend não executa DDL.
 - O roteiro de backup, execução, validação e recarga do schema está no
-  `README.md`, seção “Habilitar a v6 em produção”.
+  `README.md`, seção “Reaplicar/verificar a v6 em produção”.
 
 ### 17.5 Correção de desempenho das exportações em escala de produção (24/11/2026)
 
@@ -1198,4 +1200,90 @@ novo ensaio local/homologação.
 - Suíte estática: **77/77**, incluindo novo teste que impede a regressão de
   `DB.getCalculistas()` por linha na exportação. O JavaScript inline foi
   validado com `new Function`.
-- Nenhuma escrita, migração ou deploy em produção foi realizado.
+- Nenhuma escrita, migração ou deploy em produção foi realizado **nessa etapa
+  de 24/11**. O rollout de 25/11 está na seção 18.
+
+## 18. Rollout v5 + reconciliação + v6 em produção (25/11/2026)
+
+### 18.1 Pré-migração e backup
+
+- A produção tinha **1.416 demandas**, mas **547 demandas não tinham filhos v5**
+  (reclamante/cálculo/equipe). Por isso a v5 idempotente foi reexecutada antes da
+  v6, em vez de aplicar somente a v6.
+- Foram verificados órfãos, chaves duplicadas e valores inválidos de
+  modalidade/escopo; nenhuma inconsistência bloqueante foi encontrada.
+- Foi capturado um snapshot **data-only via REST** antes da migração:
+  `C:\Users\paulo\Downloads\DLS-backups\prod-backup-2026-11-25T11-21-19-373Z`
+  (1.416 demandas, 3.352 logs, 811 reclamantes, 869 cálculos, 876 vínculos e 14
+  perfis). A pasta inclui `SHA256SUMS.txt`. O script aplicado e a consulta de
+  verificação foram copiados para a mesma pasta. Não foi criado um `pg_dump`
+  completo nesta janela.
+
+### 18.2 Migração e reconciliação
+
+- O script combinado (`prod-v5-backfill-reconcile-v6.applied.sql`, 120.325
+  bytes) executou, em uma única transação no SQL Editor do Supabase:
+  1. reaplicação idempotente da v5 e backfill dos filhos ausentes;
+  2. reconciliação de demandas entregues cujos filhos legados estavam
+     desatualizados em relação aos campos atuais de `dls_demandas`;
+  3. correção em massa de cálculos legados principais que permaneciam abertos
+     em demandas já entregues;
+  4. aplicação da v6, normalização de tipos e recarga do schema cache.
+- A tabela temporária `_dls_bulk_legacy_open` foi usada no caminho em massa e
+  removida no `commit`; a auditoria de cálculos já entregues foi atualizada com
+  `dls.calculo_auditado=on`.
+- Resultado da reconciliação: **103 demandas** entregues com cálculo legado
+  aberto corrigidas (98 no caminho em massa + 5 direcionadas); **9 demandas**
+  receberam tratamento específico e **5 delas** também têm o marcador em massa.
+  **498 linhas de demanda** e **495 linhas de cálculo** foram normalizadas para
+  `Cálculo Cível`.
+- Verificação imediatamente após a transação:
+  - 1.416 demandas, 1.347 reclamantes, 1.416 cálculos e 1.423 vínculos;
+  - zero demanda sem filhos;
+  - zero cálculo aberto em demanda entregue;
+  - zero `bulk_pendentes`;
+  - zero cálculo entregue sem crédito;
+  - zero demanda com mais de um principal ativo;
+  - tabelas v6 com RLS habilitado e uma política cada;
+  - RPCs `dls_concluir_demanda`, `dls_alterar_status_demanda` e
+    `dls_restaurar_conclusoes_demanda` presentes.
+
+### 18.3 Deploy e smoke de produção
+
+- O frontend v5/v6 foi publicado primeiro no commit `dd6ce7c` e depois recebeu a
+  otimização de exportação no commit `57430ab`, ambos na Vercel. O domínio
+  `https://sistema-dls.vercel.app` serve a versão atual; o deploy protegido
+  `sistema-gt820eue9-pn-sistemas.vercel.app` não é usado no smoke.
+- Login administrativo, dashboard, logo e navegação foram validados sem erros de
+  console. O dashboard exibiu 1.416 demandas no momento inicial.
+- Exportações com a base completa:
+  - **Demandas:** `demandas_dls_2026-11-25.xlsx`, 391.963 bytes, ~2,5 s, abas
+    `Resumo`, `Demandas` (1.415 linhas), `Reclamantes` (1.346), `Equipe`
+    (1.422) e `Calculos` (1.415).
+  - **Produção de cálculos:** `producao_calculos_2026-11-25.xlsx`, 153.000
+    bytes, ~0,8 s, abas `Resumo` e `Calculos` (1.415 linhas).
+  - **Relatório completo:** `relatorio_dls_2026-11-25_completo.xlsx`, 533.116
+    bytes, ~4,2 s, 13 abas, incluindo `Conclusoes` e `Impugnacao`.
+- Todos os arquivos mantiveram o padrão `DLS_XLSX`, o logo DLS em cada aba
+  (drawings + `xl/media/image1.png`), cabeçalhos, autofiltro e tabulação. O
+  relatório caiu de ~11–14 s para ~4,2 s após reutilizar o `Intl.DateTimeFormat`
+  no módulo de domínio; a suíte estática passou a **78/78**.
+- Após o deploy, usuários reais já criaram **32 conclusões** (incluindo
+  impugnações) e **18 itens de impugnação**. O fluxo v6, o histórico versionado
+  e as permissões padrão de usuário comum estão operando em produção.
+- Os perfis temporários `smoke.admin` e `smoke.user` foram removidos; a produção
+  voltou a ter **14 perfis reais**.
+
+### 18.4 Contagem final e observações
+
+- Durante o smoke, uma demanda de produção (`DLS-2026-1698`) foi excluída por um
+  administrador às 09:31 de `America/Sao_Paulo`. A exclusão removeu os filhos em
+  cascata e explica a contagem final de **1.415 demandas, 1.346 reclamantes,
+  1.415 cálculos e 1.422 vínculos**. Não foi uma perda da migração e a demanda
+  não foi restaurada, pois a exclusão foi uma ação real de produção.
+- Limitações que permanecem: a autenticação é client-side (a anon key não é
+  segredo e as permissões de UI não substituem RLS por identidade); não há
+  snapshot point-in-time completo desta janela; a importação integral de um
+  backup de produção no navegador não foi reexecutada neste rollout. O caminho
+  recomendado para incidentes é correção para frente, com backup antes de
+  qualquer restore.
